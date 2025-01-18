@@ -1,10 +1,13 @@
 from dataclasses import dataclass
+import logging
+import math
+
 import torch
 from torch.nn import functional as F
 import torch.nn as nn
 
-import math
-import logging
+from transformers import BertModel as TransformerBertModel
+
 
 logger = logging.getLogger()
 
@@ -23,7 +26,7 @@ class BertConfig:
     # all dropout layers used in the model has this same dropout probability
     dropout_prob: float = 0.1
 
-    num_encoder_layers: int = 1
+    num_encoder_layers: int = 12
     layer_norm_eps: float = 1e-12
 
 
@@ -276,6 +279,7 @@ class BertModel(nn.Module):
 class BertForClassification(nn.Module):
     def __init__(self, config: BertForClassifierConfig):
         super().__init__()
+        self.config = config
         self.bert = BertModel(config)
         self.classifier_head = nn.Linear(config.hidden_dim, config.num_classes)
         self.padding_token_id = config.padding_token_id
@@ -315,11 +319,98 @@ class BertForClassification(nn.Module):
 
         return input_ids
 
-    def load_model_weights(self, model_name_or_path: str) -> None:
+    def from_pretrained(self, model_name_or_path: str) -> None:
         """
         Load weights of a model identifier from huggingface's model hub
         """
-        pass
+        pretrained_model = TransformerBertModel.from_pretrained(model_name_or_path)
+        state_dict_mapping = {
+            # Embedding layers
+            "embeddings.word_embeddings.weight": "bert.embedding.embedding.weight",
+            "embeddings.position_embeddings.weight": "bert.embedding.position_embedding.weight",
+            "embeddings.token_type_embeddings.weight": "bert.embedding.token_type_embedding.weight",
+            "embeddings.LayerNorm.weight": "bert.embedding.layer_norm.weight",
+            "embeddings.LayerNorm.bias": "bert.embedding.layer_norm.bias",
+            # Encoder layers
+            **{
+                f"encoder.layer.{i}.attention.self.query.weight": f"bert.encoder.encoder_layers.{i}.multi_head_self_attention.Q.weight"
+                for i in range(self.config.num_encoder_layers)
+            },
+            **{
+                f"encoder.layer.{i}.attention.self.query.bias": f"bert.encoder.encoder_layers.{i}.multi_head_self_attention.Q.bias"
+                for i in range(self.config.num_encoder_layers)
+            },
+            **{
+                f"encoder.layer.{i}.attention.self.key.weight": f"bert.encoder.encoder_layers.{i}.multi_head_self_attention.K.weight"
+                for i in range(self.config.num_encoder_layers)
+            },
+            **{
+                f"encoder.layer.{i}.attention.self.key.bias": f"bert.encoder.encoder_layers.{i}.multi_head_self_attention.K.bias"
+                for i in range(self.config.num_encoder_layers)
+            },
+            **{
+                f"encoder.layer.{i}.attention.self.value.weight": f"bert.encoder.encoder_layers.{i}.multi_head_self_attention.V.weight"
+                for i in range(self.config.num_encoder_layers)
+            },
+            **{
+                f"encoder.layer.{i}.attention.self.value.bias": f"bert.encoder.encoder_layers.{i}.multi_head_self_attention.V.bias"
+                for i in range(self.config.num_encoder_layers)
+            },
+            **{
+                f"encoder.layer.{i}.attention.output.dense.weight": f"bert.encoder.encoder_layers.{i}.multi_head_self_attention.attention_output.weight"
+                for i in range(self.config.num_encoder_layers)
+            },
+            **{
+                f"encoder.layer.{i}.attention.output.dense.bias": f"bert.encoder.encoder_layers.{i}.multi_head_self_attention.attention_output.bias"
+                for i in range(self.config.num_encoder_layers)
+            },
+            **{
+                f"encoder.layer.{i}.attention.output.LayerNorm.weight": f"bert.encoder.encoder_layers.{i}.self_attention_layer_norm.weight"
+                for i in range(self.config.num_encoder_layers)
+            },
+            **{
+                f"encoder.layer.{i}.attention.output.LayerNorm.bias": f"bert.encoder.encoder_layers.{i}.self_attention_layer_norm.bias"
+                for i in range(self.config.num_encoder_layers)
+            },
+            **{
+                f"encoder.layer.{i}.intermediate.dense.weight": f"bert.encoder.encoder_layers.{i}.fcnn.intermediate.weight"
+                for i in range(self.config.num_encoder_layers)
+            },
+            **{
+                f"encoder.layer.{i}.intermediate.dense.bias": f"bert.encoder.encoder_layers.{i}.fcnn.intermediate.bias"
+                for i in range(self.config.num_encoder_layers)
+            },
+            **{
+                f"encoder.layer.{i}.output.dense.weight": f"bert.encoder.encoder_layers.{i}.fcnn.output.weight"
+                for i in range(self.config.num_encoder_layers)
+            },
+            **{
+                f"encoder.layer.{i}.output.dense.bias": f"bert.encoder.encoder_layers.{i}.fcnn.output.bias"
+                for i in range(self.config.num_encoder_layers)
+            },
+            **{
+                f"encoder.layer.{i}.output.LayerNorm.weight": f"bert.encoder.encoder_layers.{i}.fcnn_layer_norm.weight"
+                for i in range(self.config.num_encoder_layers)
+            },
+            **{
+                f"encoder.layer.{i}.output.LayerNorm.bias": f"bert.encoder.encoder_layers.{i}.fcnn_layer_norm.bias"
+                for i in range(self.config.num_encoder_layers)
+            },
+            # Pooler layer
+            "pooler.dense.weight": "bert.pooler.linear.weight",
+            "pooler.dense.bias": "bert.pooler.linear.bias",
+        }
+        pretrained_state_dict = pretrained_model.state_dict()
+        new_state_dict = {}
+        for pretrained_key, my_model_key in state_dict_mapping.items():
+            if pretrained_key in pretrained_state_dict.keys():
+                new_state_dict[my_model_key] = pretrained_state_dict[pretrained_key]
+            else:
+                logger.warning(
+                    f"not found {pretrained_key} in pretrained model state dict"
+                )
+
+        self.load_state_dict(new_state_dict, strict=False)
 
 
 def params_count(model: nn.Module) -> int:
