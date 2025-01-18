@@ -32,7 +32,8 @@ class BertConfig:
 
 @dataclass
 class BertForClassifierConfig(BertConfig):
-    num_classes: int = 10
+    def __init__(self, num_classes: int) -> None:
+        self.num_classes = num_classes
 
 
 class BertEmbedding(nn.Module):
@@ -282,26 +283,21 @@ class BertForClassification(nn.Module):
         self.config = config
         self.bert = BertModel(config)
         self.classifier_head = nn.Linear(config.hidden_dim, config.num_classes)
-        self.padding_token_id = config.padding_token_id
-        self.max_sequence_length = config.max_sequence_length
 
-    def forward(self, token_ids, attention_mask: torch.Tensor) -> torch.Tensor:
-        batch_size, sequence_length = token_ids.size()
-        if sequence_length > self.max_sequence_length:
+    def forward(
+        self, input_ids, token_type_ids, attention_mask: torch.Tensor
+    ) -> torch.Tensor:
+        batch_size, sequence_length = input_ids.size()
+        if sequence_length > self.config.max_sequence_length:
             logger.warning(
                 f"input sequences' length {sequence_length} exceeded the model's max_sequence_length of {self.max_sequence_length}, they will be truncated"
             )
-            token_ids = token_ids[:, : self.max_sequence_length]
-
-        # for classification task the model's input is one sentence hence token_type_ids only contains one id
-        token_type_ids = torch.zeros((1, self.max_sequence_length), dtype=torch.long)
-        position_ids = torch.arange(0, self.max_sequence_length, dtype=torch.long).view(
-            1, -1
-        )
+            input_ids = input_ids[:, : self.config.max_sequence_length]
+        position_ids = torch.arange(0, self.config.max_sequence_length)
 
         (hidden_states, pooled_output) = self.bert(
-            self.pad_sequence(token_ids, self.padding_token_id),
-            token_type_ids.expand(batch_size, -1),
+            self.pad_sequence(input_ids, self.config.padding_token_id),
+            token_type_ids,
             position_ids.expand(batch_size, -1),
             self.pad_sequence(attention_mask, 0),
         )
@@ -311,9 +307,10 @@ class BertForClassification(nn.Module):
         # right-padding the input tensor with the padding index to match the max_sequence_length
         # input_ids has shape (batch_size, sequence_length)
         batch_size, sequence_length = input_ids.size()
-        if sequence_length < self.max_sequence_length:
+        if sequence_length < self.config.max_sequence_length:
             padding = torch.full(
-                (batch_size, self.max_sequence_length - sequence_length), fill_value
+                (batch_size, self.config.max_sequence_length - sequence_length),
+                fill_value,
             )
             return torch.cat((input_ids, padding), dim=1)
 
@@ -418,7 +415,7 @@ def params_count(model: nn.Module) -> int:
 
 
 if __name__ == "__main__":
-    config = BertForClassifierConfig()
+    config = BertForClassifierConfig(num_classes=2)
     model = BertForClassification(config)
     token_ids = torch.randint(low=0, high=config.vocab_size, size=(2, 125))
     attention_mask = torch.full((2, 125), 1)
