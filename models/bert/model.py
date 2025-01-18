@@ -4,6 +4,9 @@ from torch.nn import functional as F
 import torch.nn as nn
 
 import math
+import logging
+
+logger = logging.getLogger()
 
 
 @dataclass
@@ -16,11 +19,9 @@ class BertConfig:
 
     # self-attention parameters
     num_heads: int = 12
-    embedding_dropout_prob: float = 0.1
-    attention_dropout_prob: float = 0.1
-    attention_linear_dropout: float = 0.1
     fcnn_middle_dim: int = 3072
-    position_wise_ffnn_dropout: float = 0.1
+    # all dropout layers used in the model has this same dropout probability
+    dropout_prob: float = 0.1
 
     num_encoder_layers: int = 1
     layer_norm_eps: float = 1e-12
@@ -44,14 +45,14 @@ class BertEmbedding(nn.Module):
             config.vocab_size, config.hidden_dim, padding_idx=config.padding_token_id
         )
         # the original transformers encoder applies dropout to the sum of embeddings and positional embeddings
-        self.dropout = nn.Dropout(config.embedding_dropout_prob)
+        self.dropout = nn.Dropout(config.dropout_prob)
         self.layer_norm = nn.LayerNorm(config.hidden_dim, config.layer_norm_eps)
 
     def forward(
         self,
-        token_ids: torch.LongTensor,
-        token_type_ids: torch.LongTensor,
-        position_ids: torch.LongTensor,
+        token_ids: torch.Tensor,
+        token_type_ids: torch.Tensor,
+        position_ids: torch.Tensor,
     ) -> torch.Tensor:
         """
         token_ids, token_type_ids, position_ids shape: (batch_size, sequence_length)
@@ -74,16 +75,14 @@ class EncoderLayer(nn.Module):
         self.multi_head_self_attention = MultiHeadSelfAttention(
             config.hidden_dim,
             config.num_heads,
-            config.attention_dropout_prob,
+            config.dropout_prob,
         )
 
         self.self_attention_layer_norm = nn.LayerNorm(
             config.hidden_dim, config.layer_norm_eps, bias=True
         )
 
-        self.fcnn = FFNN(
-            config.hidden_dim, config.fcnn_middle_dim, config.position_wise_ffnn_dropout
-        )
+        self.fcnn = FFNN(config.hidden_dim, config.fcnn_middle_dim, config.dropout_prob)
 
         self.fcnn_layer_norm = nn.LayerNorm(config.hidden_dim, config.layer_norm_eps)
 
@@ -106,7 +105,7 @@ class FFNN(nn.Module):
 
     def forward(self, hidden_states: torch.Tensor) -> torch.Tensor:
         hidden_states = self.dropout(self.gelu(self.intermediate(hidden_states)))
-        hidden_states = self.dropout(self.gelu(self.output(hidden_states)))
+        hidden_states = self.gelu(self.output(hidden_states))
         return hidden_states
 
 
@@ -144,7 +143,7 @@ class MultiHeadSelfAttention(nn.Module):
 
         self.attention_dropout = nn.Dropout(attention_dropout_prob)
         self.attention_output = nn.Linear(hidden_dim, hidden_dim, bias=True)
-        self.attention_output_dropout = nn.Dropout(config.attention_linear_dropout)
+        self.attention_output_dropout = nn.Dropout(config.dropout_prob)
 
     def forward(
         self,
@@ -215,6 +214,7 @@ class BertPooler(nn.Module):
         Extract the first token embedding vector out of the hidden_states tensor
         then apply a linear and a tanh function to it
         """
+        super().__init__()
         self.linear = nn.Linear(hidden_dim, hidden_dim, bias=True)
         self.tanh = nn.Tanh()
 
@@ -229,11 +229,12 @@ class BertModel(nn.Module):
         super().__init__()
         self.embedding = BertEmbedding(config)
         self.encoder = BertEncoder(config)
+        self.pooler = BertPooler(config.hidden_dim)
         self.max_sequence_length = config.max_sequence_length
 
     def forward(
         self, token_ids, token_type_ids, position_ids, attention_mask: torch.Tensor
-    ) -> torch.Tensor:
+    ) -> tuple[torch.Tensor, torch.Tensor]:
         """
         Input tensors to this module is expected to be already padded to the model's max_sequence_length
         """
@@ -245,8 +246,9 @@ class BertModel(nn.Module):
         # sequence_length must match the max_sequence_length, this module expects all padding be done before it
         embedding = self.embedding(token_ids, token_type_ids, position_ids)
         # hidden_states shape (batch_size, sequence_length, hidden_dim)
-        hidden_states = self.encoder(embedding, attention_mask)
-        return hidden_states
+        hidden_states: torch.Tensor = self.encoder(embedding, attention_mask)
+        pooled_output: torch.Tensor = self.pooler(hidden_states)
+        return (hidden_states, pooled_output)
 
     def validate_input_dimension(
         self, token_ids, token_type_ids, position_ids, attention_mask: torch.Tensor
@@ -266,6 +268,10 @@ class BertModel(nn.Module):
             == attention_mask.shape[1]
         ), "input sequence_length dimensions don't match"
 
+        assert torch.all(
+            (attention_mask == 0) | (attention_mask == 1)
+        ).item(), "attention_mask must only contains 0s or 1s"
+
 
 class BertForClassification(nn.Module):
     def __init__(self, config: BertForClassifierConfig):
@@ -275,27 +281,27 @@ class BertForClassification(nn.Module):
         self.padding_token_id = config.padding_token_id
         self.max_sequence_length = config.max_sequence_length
 
-        # for classification task the model's input is one sentence hence token_type_ids only contains one id
-        self.token_type_ids = torch.zeros(
-            (1, self.max_sequence_length), dtype=torch.long
-        )
-        self.position_ids = torch.arange(
-            0, self.max_sequence_length, dtype=torch.long
-        ).view(1, -1)
-
     def forward(self, token_ids, attention_mask: torch.Tensor) -> torch.Tensor:
-        batch_size, _ = token_ids.size()
+        batch_size, sequence_length = token_ids.size()
+        if sequence_length > self.max_sequence_length:
+            logger.warning(
+                f"input sequences' length {sequence_length} exceeded the model's max_sequence_length of {self.max_sequence_length}, they will be truncated"
+            )
+            token_ids = token_ids[:, : self.max_sequence_length]
 
-        hidden_states = self.bert(
+        # for classification task the model's input is one sentence hence token_type_ids only contains one id
+        token_type_ids = torch.zeros((1, self.max_sequence_length), dtype=torch.long)
+        position_ids = torch.arange(0, self.max_sequence_length, dtype=torch.long).view(
+            1, -1
+        )
+
+        (hidden_states, pooled_output) = self.bert(
             self.pad_sequence(token_ids, self.padding_token_id),
-            self.token_type_ids.expand(batch_size, -1),
-            self.position_ids.expand(batch_size, -1),
+            token_type_ids.expand(batch_size, -1),
+            position_ids.expand(batch_size, -1),
             self.pad_sequence(attention_mask, 0),
         )
-        # use the first token's embedding (the CLS token) for classification
-        cls_embedding = hidden_states[:, 0, :]
-
-        return self.classifier_head(cls_embedding)
+        return self.classifier_head(pooled_output)
 
     def pad_sequence(self, input_ids: torch.Tensor, fill_value: int) -> torch.Tensor:
         # right-padding the input tensor with the padding index to match the max_sequence_length
