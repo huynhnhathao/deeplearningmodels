@@ -297,7 +297,7 @@ class BertForClassification(nn.Module):
 
         (hidden_states, pooled_output) = self.bert(
             self.pad_sequence(input_ids, self.config.padding_token_id),
-            token_type_ids,
+            self.pad_sequence(token_type_ids, 0),
             position_ids.expand(batch_size, -1),
             self.pad_sequence(attention_mask, 0),
         )
@@ -417,7 +417,9 @@ def params_count(model: nn.Module) -> int:
 if __name__ == "__main__":
     config = BertForClassifierConfig(num_classes=2)
     model = BertForClassification(config)
-    token_ids = torch.randint(low=0, high=config.vocab_size, size=(2, 125))
+    input_ids = torch.randint(low=0, high=config.vocab_size, size=(2, 125))
+    token_type_ids = torch.zeros((2, 125), dtype=torch.long)
+
     attention_mask = torch.full((2, 125), 1)
-    probs = model(token_ids, attention_mask)
+    probs = model(input_ids, token_type_ids, attention_mask)
     print(probs.shape)
