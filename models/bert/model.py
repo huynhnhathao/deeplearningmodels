@@ -32,8 +32,9 @@ class BertConfig:
 
 @dataclass
 class BertForClassifierConfig(BertConfig):
-    def __init__(self, num_classes: int) -> None:
+    def __init__(self, num_classes: int, device: torch.device) -> None:
         self.num_classes = num_classes
+        self.device = device
 
 
 class BertEmbedding(nn.Module):
@@ -290,10 +291,10 @@ class BertForClassification(nn.Module):
         batch_size, sequence_length = input_ids.size()
         if sequence_length > self.config.max_sequence_length:
             logger.warning(
-                f"input sequences' length {sequence_length} exceeded the model's max_sequence_length of {self.max_sequence_length}, they will be truncated"
+                f"input sequences' length {sequence_length} exceeded the model's max_sequence_length of {self.config.max_sequence_length}, they will be truncated"
             )
             input_ids = input_ids[:, : self.config.max_sequence_length]
-        position_ids = torch.arange(0, self.config.max_sequence_length)
+        position_ids = torch.arange(0, self.config.max_sequence_length, device=self.config.device)
 
         (hidden_states, pooled_output) = self.bert(
             self.pad_sequence(input_ids, self.config.padding_token_id),
@@ -311,6 +312,7 @@ class BertForClassification(nn.Module):
             padding = torch.full(
                 (batch_size, self.config.max_sequence_length - sequence_length),
                 fill_value,
+                device=self.config.device,
             )
             return torch.cat((input_ids, padding), dim=1)
 
@@ -415,7 +417,8 @@ def params_count(model: nn.Module) -> int:
 
 
 if __name__ == "__main__":
-    config = BertForClassifierConfig(num_classes=2)
+    device = torch.device("cuda") if torch.cuda.is_available() else torch.device("cpu")
+    config = BertForClassifierConfig(num_classes=2, device)
     model = BertForClassification(config)
     input_ids = torch.randint(low=0, high=config.vocab_size, size=(2, 125))
     token_type_ids = torch.zeros((2, 125), dtype=torch.long)
