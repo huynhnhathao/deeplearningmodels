@@ -8,6 +8,11 @@ import torch.nn as nn
 
 from transformers import BertModel as TransformerBertModel
 
+from torch.utils.data import DataLoader
+from torch.optim import Optimizer, AdamW
+from torch.nn import CrossEntropyLoss
+
+from typing import Callable
 
 logger = logging.getLogger()
 
@@ -294,7 +299,9 @@ class BertForClassification(nn.Module):
                 f"input sequences' length {sequence_length} exceeded the model's max_sequence_length of {self.config.max_sequence_length}, they will be truncated"
             )
             input_ids = input_ids[:, : self.config.max_sequence_length]
-        position_ids = torch.arange(0, self.config.max_sequence_length, device=self.config.device)
+        position_ids = torch.arange(
+            0, self.config.max_sequence_length, device=self.config.device
+        )
 
         (hidden_states, pooled_output) = self.bert(
             self.pad_sequence(input_ids, self.config.padding_token_id),
@@ -416,13 +423,73 @@ def params_count(model: nn.Module) -> int:
     return sum(p.numel() for p in model.parameters())
 
 
+def val(
+    model: nn.Module, dataloader: DataLoader, criterion: Callable, device: torch.device
+) -> None:
+    model.eval()
+    model.to(device)
+
+    num_examples = 0
+    total_loss = 0
+    correct_preds = 0
+
+    for batch in dataloader:
+        input_ids, token_type_ids, attention_mask = (
+            batch["input_ids"].to(device),
+            batch["token_type_ids"].to(device),
+            batch["attention_mask"].to(device),
+        )
+        labels = batch["labels"].to(device)
+        num_examples += len(labels)
+
+        logits = model(input_ids, token_type_ids, attention_mask)
+        loss = criterion(logits, labels)
+        total_loss += loss.item() * len(labels)
+
+        predictions = torch.argmax(logits, -1)
+        correct = (predictions == labels).sum().item()
+        correct_preds += correct
+    print(
+        f"Avg loss: {total_loss/num_examples}, Accuracy: {correct_preds/num_examples}"
+    )
+
+
+def train(
+    model: nn.Module,
+    train_dataloader: DataLoader,
+    val_dataloader: DataLoader,
+    optimizer: Optimizer,
+    num_epochs: int,
+    criterion: Callable,
+    device: torch.device,
+) -> None:
+    model.to(device)
+    for i in range(num_epochs):
+        model.train()
+        total_loss: float = 0
+        num_examples: int = 0
+        for batch in train_dataloader:
+            input_ids = batch["input_ids"].to(device)
+            token_type_ids = batch["token_type_ids"].to(device)
+            attention_mask = batch["attention_mask"].to(device)
+            labels = batch["labels"].to(device)
+
+            logits = model(input_ids, token_type_ids, attention_mask)
+            loss = criterion(logits, labels)
+
+            optimizer.zero_grad()
+            loss.backward()
+            optimizer.step()
+
+            total_loss += loss.item() * len(labels)
+            num_examples += len(labels)
+
+        logger.info(f"Epoch {i}, loss: {total_loss/num_examples}")
+        with torch.no_grad():
+            val(model, val_dataloader, criterion, device)
+
+
 if __name__ == "__main__":
     device = torch.device("cuda") if torch.cuda.is_available() else torch.device("cpu")
-    config = BertForClassifierConfig(num_classes=2, device)
+    config = BertForClassifierConfig(num_classes=2, device=device)
     model = BertForClassification(config)
-    input_ids = torch.randint(low=0, high=config.vocab_size, size=(2, 125))
-    token_type_ids = torch.zeros((2, 125), dtype=torch.long)
-
-    attention_mask = torch.full((2, 125), 1)
-    probs = model(input_ids, token_type_ids, attention_mask)
-    print(probs.shape)
