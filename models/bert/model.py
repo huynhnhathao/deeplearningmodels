@@ -12,6 +12,8 @@ from torch.utils.data import DataLoader
 from torch.optim import Optimizer, AdamW
 from torch.nn import CrossEntropyLoss
 
+from tqdm.auto import tqdm
+
 from typing import Callable
 
 logger = logging.getLogger()
@@ -31,7 +33,7 @@ class BertConfig:
     # all dropout layers used in the model has this same dropout probability
     dropout_prob: float = 0.1
 
-    num_encoder_layers: int = 12
+    num_encoder_layers: int = 1
     layer_norm_eps: float = 1e-12
 
 
@@ -243,7 +245,11 @@ class BertModel(nn.Module):
         self.max_sequence_length = config.max_sequence_length
 
     def forward(
-        self, token_ids, token_type_ids, position_ids, attention_mask: torch.Tensor
+        self,
+        token_ids: torch.Tensor,
+        token_type_ids: torch.Tensor,
+        position_ids: torch.Tensor,
+        attention_mask: torch.Tensor,
     ) -> tuple[torch.Tensor, torch.Tensor]:
         """
         Input tensors to this module is expected to be already padded to the model's max_sequence_length
@@ -261,7 +267,11 @@ class BertModel(nn.Module):
         return (hidden_states, pooled_output)
 
     def validate_input_dimension(
-        self, token_ids, token_type_ids, position_ids, attention_mask: torch.Tensor
+        self,
+        token_ids: torch.Tensor,
+        token_type_ids: torch.Tensor,
+        position_ids: torch.Tensor,
+        attention_mask: torch.Tensor,
     ) -> None:
         # check that all the dimensions match
         assert (
@@ -299,31 +309,15 @@ class BertForClassification(nn.Module):
                 f"input sequences' length {sequence_length} exceeded the model's max_sequence_length of {self.config.max_sequence_length}, they will be truncated"
             )
             input_ids = input_ids[:, : self.config.max_sequence_length]
-        position_ids = torch.arange(
-            0, self.config.max_sequence_length, device=self.config.device
-        )
+        position_ids = torch.arange(0, sequence_length, device=self.config.device)
 
-        (hidden_states, pooled_output) = self.bert(
-            self.pad_sequence(input_ids, self.config.padding_token_id),
-            self.pad_sequence(token_type_ids, 0),
+        (_, pooled_output) = self.bert(
+            input_ids,
+            token_type_ids,
             position_ids.expand(batch_size, -1),
-            self.pad_sequence(attention_mask, 0),
+            attention_mask,
         )
         return self.classifier_head(pooled_output)
-
-    def pad_sequence(self, input_ids: torch.Tensor, fill_value: int) -> torch.Tensor:
-        # right-padding the input tensor with the padding index to match the max_sequence_length
-        # input_ids has shape (batch_size, sequence_length)
-        batch_size, sequence_length = input_ids.size()
-        if sequence_length < self.config.max_sequence_length:
-            padding = torch.full(
-                (batch_size, self.config.max_sequence_length - sequence_length),
-                fill_value,
-                device=self.config.device,
-            )
-            return torch.cat((input_ids, padding), dim=1)
-
-        return input_ids
 
     def from_pretrained(self, model_name_or_path: str) -> None:
         """
@@ -464,6 +458,8 @@ def train(
     device: torch.device,
 ) -> None:
     model.to(device)
+    num_training_steps = num_epochs * len(train_dataloader)
+    progress_bar = tqdm(range(num_training_steps))
     for i in range(num_epochs):
         model.train()
         total_loss: float = 0
@@ -483,6 +479,7 @@ def train(
 
             total_loss += loss.item() * len(labels)
             num_examples += len(labels)
+            progress_bar.update(1)
 
         logger.info(f"Epoch {i}, loss: {total_loss/num_examples}")
         with torch.no_grad():
@@ -493,3 +490,8 @@ if __name__ == "__main__":
     device = torch.device("cuda") if torch.cuda.is_available() else torch.device("cpu")
     config = BertForClassifierConfig(num_classes=2, device=device)
     model = BertForClassification(config)
+
+    input_ids = torch.randint(0, config.vocab_size, (2, 100), dtype=torch.long)
+    token_type_ids = torch.zeros((2, 100), dtype=torch.long)
+    attention_masks = torch.ones((2, 100), dtype=torch.long)
+    logits = model(input_ids, token_type_ids, attention_masks)
