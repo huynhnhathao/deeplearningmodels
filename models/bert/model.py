@@ -5,18 +5,28 @@ import math
 import torch
 from torch.nn import functional as F
 import torch.nn as nn
+from torch.amp import autocast, GradScaler
 
-from transformers import BertModel as TransformerBertModel
+
+from transformers import (
+    BertModel as TransformerBertModel,
+    BertTokenizer,
+    DataCollatorWithPadding,
+)
+from datasets import load_dataset
 
 from torch.utils.data import DataLoader
 from torch.optim import Optimizer, AdamW
+from torch.optim.lr_scheduler import LinearLR, LRScheduler
 from torch.nn import CrossEntropyLoss
 
 from tqdm.auto import tqdm
 
-from typing import Callable
+from typing import Callable, Optional
 
 logger = logging.getLogger()
+
+VERY_NEGATIVE_NUMBER = -1e20
 
 
 @dataclass
@@ -33,7 +43,7 @@ class BertConfig:
     # all dropout layers used in the model has this same dropout probability
     dropout_prob: float = 0.1
 
-    num_encoder_layers: int = 1
+    num_encoder_layers: int = 12
     layer_norm_eps: float = 1e-12
 
 
@@ -189,7 +199,7 @@ class MultiHeadSelfAttention(nn.Module):
         # padded tokens can't be attended to and can not attend to other tokens
         attention_mask = attention_mask.unsqueeze(1) & attention_mask.unsqueeze(-1)
         attention_scores = attention_scores.masked_fill(
-            attention_mask.unsqueeze(1) == 0, float("-inf")
+            attention_mask.unsqueeze(1) == 0, VERY_NEGATIVE_NUMBER
         )
         attention_scores = F.softmax(attention_scores, -1)
 
@@ -298,7 +308,9 @@ class BertForClassification(nn.Module):
         super().__init__()
         self.config = config
         self.bert = BertModel(config)
-        self.classifier_head = nn.Linear(config.hidden_dim, config.num_classes)
+        self.classifier_head = nn.Linear(
+            config.hidden_dim, config.num_classes, bias=True
+        )
 
     def forward(
         self, input_ids, token_type_ids, attention_mask: torch.Tensor
@@ -450,13 +462,16 @@ def val(
 
 def train(
     model: nn.Module,
+    optimizer: Optimizer,
+    criterion: Callable,
     train_dataloader: DataLoader,
     val_dataloader: DataLoader,
-    optimizer: Optimizer,
     num_epochs: int,
-    criterion: Callable,
     device: torch.device,
+    lr_scheduler: Optional[LRScheduler] = None,
 ) -> None:
+    # scaler = GradScaler("cuda")
+
     model.to(device)
     num_training_steps = num_epochs * len(train_dataloader)
     progress_bar = tqdm(range(num_training_steps))
@@ -470,18 +485,19 @@ def train(
             attention_mask = batch["attention_mask"].to(device)
             labels = batch["labels"].to(device)
 
+            optimizer.zero_grad()
             logits = model(input_ids, token_type_ids, attention_mask)
             loss = criterion(logits, labels)
-
-            optimizer.zero_grad()
             loss.backward()
             optimizer.step()
+            if lr_scheduler is not None:
+                lr_scheduler.step()
 
             total_loss += loss.item() * len(labels)
             num_examples += len(labels)
             progress_bar.update(1)
 
-        logger.info(f"Epoch {i}, loss: {total_loss/num_examples}")
+        print(f"Epoch {i}, loss: {total_loss/num_examples}")
         with torch.no_grad():
             val(model, val_dataloader, criterion, device)
 
@@ -490,8 +506,62 @@ if __name__ == "__main__":
     device = torch.device("cuda") if torch.cuda.is_available() else torch.device("cpu")
     config = BertForClassifierConfig(num_classes=2, device=device)
     model = BertForClassification(config)
+    checkpoint_name = "bert-base-uncased"
+    model.from_pretrained(checkpoint_name)
 
-    input_ids = torch.randint(0, config.vocab_size, (2, 100), dtype=torch.long)
-    token_type_ids = torch.zeros((2, 100), dtype=torch.long)
-    attention_masks = torch.ones((2, 100), dtype=torch.long)
-    logits = model(input_ids, token_type_ids, attention_masks)
+    tokenizer = BertTokenizer.from_pretrained(checkpoint_name)
+    raw_dataset = load_dataset("glue", "sst2")
+
+    def tokenize_function(example):
+        return tokenizer(example["sentence"], truncation=True)
+
+    tokenized_dataset = raw_dataset.map(tokenize_function, batched=True)
+
+    tokenized_dataset = tokenized_dataset.remove_columns(["sentence", "idx"])
+    tokenized_dataset = tokenized_dataset.rename_column("label", "labels")
+    tokenized_dataset.set_format("torch")
+    data_collator = DataCollatorWithPadding(tokenizer=tokenizer)
+
+    batch_size = 64
+    learning_rate = 1e-3
+    num_epochs = 5
+
+    train_dataloader = DataLoader(
+        tokenized_dataset["train"],
+        shuffle=True,
+        batch_size=batch_size,
+        collate_fn=data_collator,
+    )
+    val_dataloader = DataLoader(
+        tokenized_dataset["validation"],
+        shuffle=False,
+        batch_size=batch_size,
+        collate_fn=data_collator,
+    )
+    test_dataloader = DataLoader(
+        tokenized_dataset["test"],
+        shuffle=False,
+        batch_size=batch_size,
+        collate_fn=data_collator,
+    )
+
+    optimizer = torch.optim.AdamW(
+        params=model.parameters(),
+        lr=learning_rate,
+        eps=1e-8,
+        weight_decay=0.01,
+    )
+    criterion = torch.nn.CrossEntropyLoss()
+
+    scheduler = LinearLR(optimizer, 1, 0.2, num_epochs * len(train_dataloader))
+
+    train(
+        model,
+        optimizer,
+        criterion,
+        train_dataloader,
+        val_dataloader,
+        num_epochs,
+        device,
+        scheduler,
+    )
