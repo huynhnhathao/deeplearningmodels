@@ -308,8 +308,11 @@ class BertForClassification(nn.Module):
         super().__init__()
         self.config = config
         self.bert = BertModel(config)
-        self.classifier_head = nn.Linear(
-            config.hidden_dim, config.num_classes, bias=True
+        self.intermediate = nn.Linear(
+            config.hidden_dim, config.fcnn_middle_dim, bias=True
+        )
+        self.classification_head = nn.Linear(
+            config.fcnn_middle_dim, config.num_classes, bias=True
         )
 
     def forward(
@@ -329,7 +332,7 @@ class BertForClassification(nn.Module):
             position_ids.expand(batch_size, -1),
             attention_mask,
         )
-        return self.classifier_head(pooled_output)
+        return self.classification_head(F.gelu(self.intermediate(pooled_output)))
 
     def from_pretrained(self, model_name_or_path: str) -> None:
         """
@@ -523,7 +526,7 @@ if __name__ == "__main__":
     data_collator = DataCollatorWithPadding(tokenizer=tokenizer)
 
     batch_size = 64
-    learning_rate = 1e-3
+    learning_rate = 5e-5
     num_epochs = 5
 
     train_dataloader = DataLoader(
