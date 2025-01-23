@@ -505,7 +505,37 @@ def train(
             val(model, val_dataloader, criterion, device)
 
 
+def test_forward_pass():
+    """Test the forward pass of the BERT model"""
+    device = torch.device("cuda") if torch.cuda.is_available() else torch.device("cpu")
+    
+    # Create test inputs
+    batch_size = 2
+    seq_length = 16
+    input_ids = torch.randint(0, 30522, (batch_size, seq_length)).to(device)  # Random token IDs
+    token_type_ids = torch.zeros((batch_size, seq_length), dtype=torch.long).to(device)  # All type 0
+    attention_mask = torch.ones((batch_size, seq_length), dtype=torch.long).to(device)  # All tokens active
+    
+    # Initialize model
+    config = BertForClassifierConfig(num_classes=2, device=device)
+    model = BertForClassification(config)
+    model.to(device)
+    
+    # Run forward pass
+    with torch.no_grad():
+        outputs = model(input_ids, token_type_ids, attention_mask)
+    
+    # Verify output shapes
+    assert outputs.shape == (batch_size, config.num_classes), \
+        f"Expected output shape {(batch_size, config.num_classes)}, got {outputs.shape}"
+    
+    print("Forward pass test passed!")
+
 if __name__ == "__main__":
+    # Run the test
+    test_forward_pass()
+    
+    # Original training code
     device = torch.device("cuda") if torch.cuda.is_available() else torch.device("cpu")
     config = BertForClassifierConfig(num_classes=2, device=device)
     model = BertForClassification(config)
