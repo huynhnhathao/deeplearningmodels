@@ -1,10 +1,9 @@
 from typing import List
 import torch
-from torch.utils.data import DataLoader
 from typing import Dict, List, Optional, Union
 import re
-from collections import defaultdict
-from .model import BertForClassification
+
+from models.bert.model import BertForClassification
 
 
 class BertTokenizer:
@@ -50,6 +49,7 @@ class BertTokenizer:
         if self.lower_case:
             text = text.lower()
 
+        text = self.whitespace_pattern.sub(" ", text).strip()
         # Split text into words and punctuation
         tokens = []
         for word in self.word_piece_pattern.findall(text):
@@ -57,21 +57,27 @@ class BertTokenizer:
                 tokens.append(word)
             else:
                 # Handle unknown words with wordpiece algorithm
-                start = 0
-                while start < len(word):
-                    end = len(word)
-                    while start < end:
-                        subword = word[start:end]
-                        if start > 0:
-                            subword = "##" + subword
-                        if subword in self.vocab:
-                            tokens.append(subword)
-                            start = end
-                            break
-                        end -= 1
-                    else:
-                        tokens.append(self.unk_token)
-                        break
+                subwords = self._tokenize_sub_word(word)
+                tokens.extend(subwords)
+        return tokens
+
+    def _tokenize_sub_word(self, word: str) -> list[str]:
+        tokens = []
+        start = 0
+        while start < len(word):
+            end = len(word)
+            while start < end:
+                subword = word[start:end]
+                if start > 0:
+                    subword = "##" + subword
+                if subword in self.vocab:
+                    tokens.append(subword)
+                    start = end
+                    break
+                end -= 1
+            else:
+                tokens.append(self.unk_token)
+                break
         return tokens
 
     def convert_tokens_to_ids(self, tokens: List[str]) -> List[int]:
@@ -155,60 +161,12 @@ class BertTokenizer:
         }
 
 
-def batch_sentiment_inference(
-    model: BertForClassification,
-    texts: List[str],
-    tokenizer: BertTokenizer,  # Assuming a compatible tokenizer exists
-    device: torch.device,
-    batch_size: int = 32,
-) -> List[int]:
-    """
-    Perform batch sentiment classification on a list of texts.
+def test_tokenizer():
+    text = ["I am trying to implement the BERT tokenizer from scratch"]
+    tokenizer = BertTokenizer()
+    tokenized = tokenizer(text, return_tensors="pt")
+    print(tokenized)
 
-    Args:
-        model: Pretrained BertForClassification model
-        texts: List of input text strings
-        tokenizer: BERT tokenizer instance
-        device: Torch device (cpu or cuda)
-        batch_size: Number of samples per batch
 
-    Returns:
-        List of predicted class indices (0 for negative, 1 for positive sentiment)
-    """
-    # Tokenize all texts
-    encodings = tokenizer(
-        texts,
-        padding=True,
-        truncation=True,
-        return_tensors="pt",
-        max_length=model.config.max_sequence_length,
-    )
-
-    # Create DataLoader for batching
-    dataset = torch.utils.data.TensorDataset(
-        encodings["input_ids"], encodings["token_type_ids"], encodings["attention_mask"]
-    )
-    dataloader = DataLoader(dataset, batch_size=batch_size, shuffle=False)
-
-    predictions = []
-    model.eval()
-    model.to(device)
-
-    with torch.no_grad():
-        for batch in dataloader:
-            # Move batch to device
-            input_ids, token_type_ids, attention_mask = [t.to(device) for t in batch]
-
-            # Forward pass
-            outputs = model(
-                token_ids=input_ids,
-                token_type_ids=token_type_ids,
-                position_ids=None,  # Will be generated automatically
-                attention_mask=attention_mask,
-            )
-
-            # Get predicted classes
-            _, batch_preds = torch.max(outputs, dim=1)
-            predictions.extend(batch_preds.cpu().tolist())
-
-    return predictions
+if __name__ == "__main__":
+    test_tokenizer()
