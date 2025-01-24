@@ -3,13 +3,15 @@ import torch
 from typing import Dict, List, Optional, Union
 import re
 
+from transformers import AutoTokenizer
+
 from models.bert.model import BertForClassification
 
 
 class BertTokenizer:
     def __init__(
         self,
-        vocab: Dict[str, int],
+        model_name_or_path: str,
         unk_token: str = "[UNK]",
         pad_token: str = "[PAD]",
         cls_token: str = "[CLS]",
@@ -29,7 +31,7 @@ class BertTokenizer:
             mask_token: Mask token string
             lower_case: Whether to lowercase input text
         """
-        self.vocab = vocab
+        self.vocab = self.load_vocab(model_name_or_path)
         self.unk_token = unk_token
         self.pad_token = pad_token
         self.cls_token = cls_token
@@ -38,7 +40,7 @@ class BertTokenizer:
         self.lower_case = lower_case
 
         # Create reverse mapping
-        self.inv_vocab = {v: k for k, v in vocab.items()}
+        self.inv_vocab = {v: k for k, v in self.vocab.items()}
 
         # Precompile regex patterns
         self.word_piece_pattern = re.compile(r"[\w']+|[^\w\s]")
@@ -91,7 +93,7 @@ class BertTokenizer:
     def __call__(
         self,
         text: Union[str, List[str]],
-        padding: bool = False,
+        padding: bool = True,
         truncation: bool = False,
         max_length: Optional[int] = None,
         return_tensors: Optional[str] = None,
@@ -132,16 +134,20 @@ class BertTokenizer:
 
         # Handle padding
         max_len = max(len(ids) for ids in input_ids)
+        attention_mask = []
         if padding:
+            attention_mask = [
+                [1] * len(ids) + [0] * (max_len - len(ids)) for ids in input_ids
+            ]
+
             input_ids = [
                 ids + [self.vocab[self.pad_token]] * (max_len - len(ids))
                 for ids in input_ids
             ]
-
-        # Create attention mask
-        attention_mask = [
-            [1] * len(ids) + [0] * (max_len - len(ids)) for ids in input_ids
-        ]
+        else:
+            attention_mask = [
+                [1] * len(ids) + [0] * (max_len - len(ids)) for ids in input_ids
+            ]
 
         # Create token type ids (all zeros for single sequence)
         token_type_ids = [[0] * len(ids) for ids in input_ids]
@@ -160,10 +166,17 @@ class BertTokenizer:
             "attention_mask": attention_mask,
         }
 
+    def load_vocab(self, model_name_or_path: str) -> Dict[str, int]:
+        tokenizer = AutoTokenizer.from_pretrained(model_name_or_path)
+        return tokenizer.vocab
+
 
 def test_tokenizer():
-    text = ["I am trying to implement the BERT tokenizer from scratch"]
-    tokenizer = BertTokenizer()
+    text = [
+        "I am trying to implement the BERT tokenizer from scratch",
+        "This type of learning is fascinating",
+    ]
+    tokenizer = BertTokenizer("bert-base-uncased")
     tokenized = tokenizer(text, return_tensors="pt")
     print(tokenized)
 
