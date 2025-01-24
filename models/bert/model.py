@@ -505,6 +505,66 @@ def train(
             val(model, val_dataloader, criterion, device)
 
 
+def test_bert_encoder_forward_pass():
+    """Test the forward pass of the BERT encoder"""
+    device = torch.device("cuda") if torch.cuda.is_available() else torch.device("cpu")
+    
+    # Create test config
+    config = BertConfig(
+        hidden_dim=768,
+        num_encoder_layers=12,
+        num_heads=12,
+        dropout_prob=0.1,
+        max_sequence_length=512,
+        vocab_size=30522,
+        type_vocab_size=2,
+        padding_token_id=0
+    )
+    
+    # Initialize encoder
+    encoder = BertEncoder(config).to(device)
+    
+    # Create test inputs
+    batch_size = 2
+    sequence_length = 128
+    hidden_dim = config.hidden_dim
+    
+    # Random input embeddings (would normally come from BertEmbedding)
+    input_embeddings = torch.randn(
+        batch_size, sequence_length, hidden_dim, 
+        device=device
+    )
+    
+    # Attention mask (1 = real token, 0 = padding)
+    attention_mask = torch.ones(
+        batch_size, sequence_length, 
+        dtype=torch.long, device=device
+    )
+    
+    # Add some padding tokens
+    attention_mask[:, 100:] = 0
+    
+    # Forward pass
+    with torch.no_grad():
+        output = encoder(input_embeddings, attention_mask)
+    
+    # Verify output shape
+    assert output.shape == (batch_size, sequence_length, hidden_dim), \
+        f"Expected output shape {(batch_size, sequence_length, hidden_dim)}, got {output.shape}"
+    
+    # Verify no NaN values
+    assert not torch.isnan(output).any(), "Output contains NaN values"
+    
+    # Verify padding positions are zeroed out
+    padding_positions = (attention_mask == 0)
+    assert torch.allclose(
+        output[padding_positions], 
+        torch.zeros_like(output[padding_positions]),
+        atol=1e-6
+    ), "Padding positions should be zeroed out"
+    
+    print("BertEncoder forward pass test passed!")
+
 def test_forward_pass():
     """Test the forward pass of the BERT model"""
     device = torch.device("cuda") if torch.cuda.is_available() else torch.device("cpu")
@@ -541,7 +601,8 @@ def test_forward_pass():
 
 
 if __name__ == "__main__":
-    # Run the test
+    # Run the tests
+    test_bert_encoder_forward_pass()
     test_forward_pass()
 
     # Original training code
