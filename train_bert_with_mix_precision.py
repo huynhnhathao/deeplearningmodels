@@ -179,10 +179,7 @@ if __name__ == "__main__":
     criterion = CrossEntropyLoss()
     grad_scaler = torch.amp.GradScaler(device.type)
 
-    optimizer = AdamW(
-        model.parameters(),
-        lr=args.learning_rate,
-    )
+    optimizer = AdamW(model.parameters(), lr=args.learning_rate, weight_decay=0.05)
     train_dataloader, val_dataloader, test_dataloader = get_sst2_dataloaders(
         batch_size=args.batch_size
     )

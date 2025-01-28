@@ -39,9 +39,12 @@ class BertConfig:
 
 @dataclass
 class BertForClassifierConfig(BertConfig):
-    def __init__(self, num_classes: int, device: torch.device) -> None:
+    def __init__(
+        self, num_classes: int, device: torch.device, cls_dropout_prob: float = 0.5
+    ) -> None:
         self.num_classes = num_classes
         self.device = device
+        self.cls_dropout_prob = cls_dropout_prob
 
 
 class BertEmbedding(nn.Module):
@@ -304,6 +307,8 @@ class BertForClassification(nn.Module):
         self.classification_head = nn.Linear(
             config.fcnn_middle_dim, config.num_classes, bias=True
         )
+        self.cls_dropout = nn.Dropout(config.cls_dropout_prob)
+        self.cls_layer_norm = nn.LayerNorm(config.fcnn_middle_dim)
 
     def forward(
         self, input_ids, token_type_ids, attention_mask: torch.Tensor
@@ -322,7 +327,10 @@ class BertForClassification(nn.Module):
             position_ids.expand(batch_size, -1),
             attention_mask,
         )
-        return self.classification_head(F.gelu(self.intermediate(pooled_output)))
+
+        pooled_output = F.gelu(self.intermediate(pooled_output))
+        pooled_output = self.cls_dropout(self.cls_layer_norm(pooled_output))
+        return self.classification_head(pooled_output)
 
     def from_pretrained(self, model_name_or_path: str) -> None:
         """
