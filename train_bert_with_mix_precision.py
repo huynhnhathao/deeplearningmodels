@@ -151,6 +151,14 @@ if __name__ == "__main__":
     parser.add_argument(
         "--num_epoch", type=int, default=5, help="number of epoch to train"
     )
+
+    parser.add_argument(
+        "--cls_dropout_prob",
+        type=float,
+        default=0.3,
+        help="dropout prob apply to the classification fcnn intermediate layer",
+    )
+
     parser.add_argument(
         "--state_dict_path",
         type=str,
@@ -162,7 +170,7 @@ if __name__ == "__main__":
 
     device = torch.device("cuda") if torch.cuda.is_available() else torch.device("cpu")
     device = torch.device(device)
-    config = BertForClassifierConfig(2, device)
+    config = BertForClassifierConfig(2, device, args.cls_dropout_prob)
     model = BertForClassification(config)
     if args.state_dict_path != "":
         logger.info(f"loading state dict from {args.state_dict_path}")
