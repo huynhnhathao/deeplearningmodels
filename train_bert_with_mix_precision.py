@@ -133,14 +133,27 @@ if __name__ == "__main__":
     parser.add_argument(
         "--num_epoch", type=int, default=5, help="number of epoch to train"
     )
+    parser.add_argument(
+        "--state_dict_path",
+        type=str,
+        default="",
+        help="path to the Pytorch saved state dict to continue training",
+    )
 
     args = parser.parse_args()
 
     device = torch.device("cuda") if torch.cuda.is_available() else torch.device("cpu")
-
     device = torch.device(device)
     config = BertForClassifierConfig(2, device)
     model = BertForClassification(config)
+    if args.state_dict_path != "":
+        model.load_state_dict(
+            torch.load(args.state_dict_path, weights_only=True), strict=True
+        )
+    else:
+        checkpoint = "bert-base-uncased"
+        model.from_pretrained(checkpoint)
+
     criterion = CrossEntropyLoss()
     grad_scaler = torch.amp.GradScaler(device.type)
 
