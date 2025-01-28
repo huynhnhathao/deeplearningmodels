@@ -21,6 +21,10 @@ from models.bert import (
     BertForClassifierConfig,
 )
 
+import logging
+
+logger = logging.getLogger()
+
 
 def val(
     model: nn.Module, dataloader: DataLoader, criterion: Callable, device: torch.device
@@ -45,7 +49,7 @@ def val(
         predictions = torch.argmax(logits, -1)
         correct = (predictions == labels).sum().item()
         correct_preds += correct
-    print(
+    logger.info(
         f"Avg loss: {total_loss/len(dataloader)}, Accuracy: {correct_preds/num_examples}"
     )
 
@@ -147,11 +151,15 @@ if __name__ == "__main__":
     config = BertForClassifierConfig(2, device)
     model = BertForClassification(config)
     if args.state_dict_path != "":
+        logger.info(f"loading state dict from {args.state_dict_path}")
         model.load_state_dict(
             torch.load(args.state_dict_path, weights_only=True), strict=True
         )
     else:
         checkpoint = "bert-base-uncased"
+        logger.info(
+            f"loading pretrained weights from huggingface checkpoint {checkpoint}"
+        )
         model.from_pretrained(checkpoint)
 
     criterion = CrossEntropyLoss()
@@ -171,6 +179,7 @@ if __name__ == "__main__":
 
     model.to(device)
     progress_bar = tqdm(range(args.num_epoch * len(train_dataloader)))
+    logger.info("Start training")
     for epoch in range(args.num_epoch):
         model.train()
         train(
