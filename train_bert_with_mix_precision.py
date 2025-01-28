@@ -23,7 +23,29 @@ from models.bert import (
 
 import logging
 
-logger = logging.getLogger()
+
+def get_logger() -> logging.Logger:
+    logger = logging.getLogger()
+
+    # Create handlers
+    console_handler = logging.StreamHandler()  # Handler for console output
+    file_handler = logging.FileHandler(f"{__file__}.log")  # Handler for file output
+    # Set level for handlers
+    console_handler.setLevel(logging.INFO)
+    file_handler.setLevel(logging.INFO)  # File will log INFO and above
+    # Create formatters and add them to handlers
+    formatter = logging.Formatter("%(asctime)s - %(levelname)s - %(message)s")
+    console_handler.setFormatter(formatter)
+    file_handler.setFormatter(formatter)
+
+    # Add handlers to the logger
+    logger.addHandler(console_handler)
+    logger.addHandler(file_handler)
+
+    return logger
+
+
+logger = get_logger()
 
 
 def val(
