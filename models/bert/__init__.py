@@ -1,3 +1,3 @@
 # Marks this directory as a Python package
-from .tokenizer import BertTokenizer
-from .model import BertForClassification
+from .tokenizer import MyBertTokenizer
+from .model import BertForClassification, BertConfig, BertForClassifierConfig

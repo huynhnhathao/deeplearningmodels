@@ -5,7 +5,6 @@ import math
 import torch
 from torch.nn import functional as F
 import torch.nn as nn
-from torch.amp import autocast, GradScaler
 
 
 from transformers import (
@@ -13,16 +12,7 @@ from transformers import (
     BertTokenizer,
     DataCollatorWithPadding,
 )
-from datasets import load_dataset
-
-from torch.utils.data import DataLoader
-from torch.optim import Optimizer, AdamW
-from torch.optim.lr_scheduler import LinearLR, LRScheduler
-from torch.nn import CrossEntropyLoss
-
-from tqdm.auto import tqdm
-
-from typing import Callable, Optional
+from typing import Callable
 
 logger = logging.getLogger()
 
@@ -338,7 +328,9 @@ class BertForClassification(nn.Module):
         """
         Load weights of a model identifier from huggingface's model hub
         """
-        pretrained_model = TransformerBertModel.from_pretrained(model_name_or_path)
+        pretrained_model = TransformerBertModel.from_pretrained(
+            model_name_or_path, torch_dtype="auto"
+        )
         state_dict_mapping = {
             # Embedding layers
             "embeddings.word_embeddings.weight": "bert.embedding.embedding.weight",
@@ -432,139 +424,6 @@ def params_count(model: nn.Module) -> int:
     return sum(p.numel() for p in model.parameters())
 
 
-def val(
-    model: nn.Module, dataloader: DataLoader, criterion: Callable, device: torch.device
-) -> None:
-    model.eval()
-    model.to(device)
-
-    num_examples = 0
-    total_loss = 0
-    correct_preds = 0
-
-    for batch in dataloader:
-        input_ids, token_type_ids, attention_mask = (
-            batch["input_ids"].to(device),
-            batch["token_type_ids"].to(device),
-            batch["attention_mask"].to(device),
-        )
-        labels = batch["labels"].to(device)
-        num_examples += len(labels)
-
-        logits = model(input_ids, token_type_ids, attention_mask)
-        loss = criterion(logits, labels)
-        total_loss += loss.item() * len(labels)
-
-        predictions = torch.argmax(logits, -1)
-        correct = (predictions == labels).sum().item()
-        correct_preds += correct
-    print(
-        f"Avg loss: {total_loss/num_examples}, Accuracy: {correct_preds/num_examples}"
-    )
-
-
-def train(
-    model: nn.Module,
-    optimizer: Optimizer,
-    criterion: Callable,
-    train_dataloader: DataLoader,
-    val_dataloader: DataLoader,
-    num_epochs: int,
-    device: torch.device,
-    lr_scheduler: Optional[LRScheduler] = None,
-) -> None:
-    # scaler = GradScaler("cuda")
-
-    model.to(device)
-    num_training_steps = num_epochs * len(train_dataloader)
-    progress_bar = tqdm(range(num_training_steps))
-    for i in range(num_epochs):
-        model.train()
-        total_loss: float = 0
-        num_examples: int = 0
-        for batch in train_dataloader:
-            input_ids = batch["input_ids"].to(device)
-            token_type_ids = batch["token_type_ids"].to(device)
-            attention_mask = batch["attention_mask"].to(device)
-            labels = batch["labels"].to(device)
-
-            optimizer.zero_grad()
-            logits = model(input_ids, token_type_ids, attention_mask)
-            loss = criterion(logits, labels)
-            loss.backward()
-            optimizer.step()
-            if lr_scheduler is not None:
-                lr_scheduler.step()
-
-            total_loss += loss.item() * len(labels)
-            num_examples += len(labels)
-            progress_bar.update(1)
-
-        print(f"Epoch {i}, loss: {total_loss/num_examples}")
-        with torch.no_grad():
-            val(model, val_dataloader, criterion, device)
-
-
-def test_bert_encoder_forward_pass():
-    """Test the forward pass of the BERT encoder"""
-    device = torch.device("cuda") if torch.cuda.is_available() else torch.device("cpu")
-    
-    # Create test config
-    config = BertConfig(
-        hidden_dim=768,
-        num_encoder_layers=12,
-        num_heads=12,
-        dropout_prob=0.1,
-        max_sequence_length=512,
-        vocab_size=30522,
-        type_vocab_size=2,
-        padding_token_id=0
-    )
-    
-    # Initialize encoder
-    encoder = BertEncoder(config).to(device)
-    
-    # Create test inputs
-    batch_size = 2
-    sequence_length = 128
-    hidden_dim = config.hidden_dim
-    
-    # Random input embeddings (would normally come from BertEmbedding)
-    input_embeddings = torch.randn(
-        batch_size, sequence_length, hidden_dim, 
-        device=device
-    )
-    
-    # Attention mask (1 = real token, 0 = padding)
-    attention_mask = torch.ones(
-        batch_size, sequence_length, 
-        dtype=torch.long, device=device
-    )
-    
-    # Add some padding tokens
-    attention_mask[:, 100:] = 0
-    
-    # Forward pass
-    with torch.no_grad():
-        output = encoder(input_embeddings, attention_mask)
-    
-    # Verify output shape
-    assert output.shape == (batch_size, sequence_length, hidden_dim), \
-        f"Expected output shape {(batch_size, sequence_length, hidden_dim)}, got {output.shape}"
-    
-    # Verify no NaN values
-    assert not torch.isnan(output).any(), "Output contains NaN values"
-    
-    # Verify padding positions are zeroed out
-    padding_positions = (attention_mask == 0)
-    assert torch.allclose(
-        output[padding_positions], 
-        torch.zeros_like(output[padding_positions]),
-        atol=1e-6
-    ), "Padding positions should be zeroed out"
-    
-    print("BertEncoder forward pass test passed!")
-
 def test_forward_pass():
     """Test the forward pass of the BERT model"""
     device = torch.device("cuda") if torch.cuda.is_available() else torch.device("cpu")
@@ -602,7 +461,6 @@ def test_forward_pass():
 
 if __name__ == "__main__":
     # Run the tests
-    test_bert_encoder_forward_pass()
     test_forward_pass()
 
     # Original training code

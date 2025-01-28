@@ -8,7 +8,7 @@ from transformers import AutoTokenizer
 from models.bert.model import BertForClassification
 
 
-class BertTokenizer:
+class MyBertTokenizer:
     def __init__(
         self,
         model_name_or_path: str,
@@ -128,7 +128,7 @@ class BertTokenizer:
         # Convert to ids
         input_ids = [self.convert_tokens_to_ids(tokens) for tokens in batch_tokens]
 
-        # Handle truncation
+        # Handle truncation, ERROR if max_length > than len(ids)
         if truncation and max_length:
             input_ids = [ids[:max_length] for ids in input_ids]
 
