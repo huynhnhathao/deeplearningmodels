@@ -1,4 +1,5 @@
 from typing import Callable, Optional, Tuple, List, Dict
+import sys
 
 from datasets import load_dataset
 
@@ -28,7 +29,7 @@ def get_logger() -> logging.Logger:
     logger = logging.getLogger()
 
     # Create handlers
-    console_handler = logging.StreamHandler()  # Handler for console output
+    console_handler = logging.StreamHandler(sys.stdout)  # Handler for console output
     file_handler = logging.FileHandler(f"{__file__}.log")  # Handler for file output
     # Set level for handlers
     console_handler.setLevel(logging.INFO)
