@@ -13,6 +13,8 @@ from torch.nn import CrossEntropyLoss
 
 
 from tqdm.auto import tqdm
+import argparse
+
 
 from models.bert import MyBertTokenizer, BertForClassification, BertForClassifierConfig
 
@@ -20,12 +22,9 @@ from models.bert import MyBertTokenizer, BertForClassification, BertForClassifie
 def val(
     model: nn.Module, dataloader: DataLoader, criterion: Callable, device: torch.device
 ) -> None:
-    model.eval()
-    model.to(device)
-
-    num_examples = 0
     total_loss = 0
     correct_preds = 0
+    num_examples = 0
 
     for batch in dataloader:
         input_ids, token_type_ids, attention_mask = (
@@ -38,13 +37,13 @@ def val(
 
         logits = model(input_ids, token_type_ids, attention_mask)
         loss = criterion(logits, labels)
-        total_loss += loss.item() * len(labels)
+        total_loss += loss.item()
 
         predictions = torch.argmax(logits, -1)
         correct = (predictions == labels).sum().item()
         correct_preds += correct
     print(
-        f"Avg loss: {total_loss/num_examples}, Accuracy: {correct_preds/num_examples}"
+        f"Avg loss: {total_loss/len(dataloader)}, Accuracy: {correct_preds/num_examples}"
     )
 
 
@@ -88,6 +87,7 @@ def get_sst2_dataloaders(
     return (train_dataloader, val_dataloader, test_dataloader)
 
 
+# train the model one epoch
 def train(
     model: nn.Module,
     optimizer: Optimizer,
@@ -97,8 +97,6 @@ def train(
     grad_scaler: torch.amp.GradScaler,
     lr_scheduler: Optional[LRScheduler] = None,
 ) -> None:
-    model.train()
-    print(f"Initial grad scale: {grad_scaler.get_scale()}")
     for batch in train_dataloader:
         input_ids = batch["input_ids"].to(device)
         token_type_ids = batch["token_type_ids"].to(device)
@@ -114,7 +112,6 @@ def train(
         grad_scaler.scale(loss).backward()
         grad_scaler.step(optimizer)
         grad_scaler.update()
-        print(f"Updated grad scale: {grad_scaler.get_scale()}")
         optimizer.zero_grad()
 
         if lr_scheduler is not None:
@@ -122,14 +119,50 @@ def train(
 
 
 if __name__ == "__main__":
-    # device = torch.device("cuda") if torch.cuda.is_available() else torch.device("cpu")
-    # config = BertForClassifierConfig()
-    # model = BertForClassification(config)
-    # optimizer = AdamW(model.parameters(), lr=learning_rate)
-
-    batch_size = 64
-    train_dataloader, val_dataloader, test_dataloader = get_sst2_dataloaders(
-        batch_size=batch_size
+    parser = argparse.ArgumentParser(description="Training script")
+    parser.add_argument("--batch_size", type=int, default=64, help="Batch size")
+    parser.add_argument(
+        "--learning_rate", type=float, default=5e-5, help="learning rate for AdamW"
+    )
+    parser.add_argument(
+        "--num_epoch", type=int, default=5, help="number of epoch to train"
     )
 
-    print("helloworld")
+    parser.add_argument()
+
+    args = parser.parse_args()
+
+    device = torch.device(args.device)
+    config = BertForClassifierConfig(2, device)
+    model = BertForClassification(config)
+    criterion = CrossEntropyLoss()
+    grad_scaler = torch.amp.GradScaler(device.type)
+
+    optimizer = AdamW(
+        model.parameters(),
+        lr=args.learning_rate,
+    )
+    train_dataloader, val_dataloader, test_dataloader = get_sst2_dataloaders(
+        batch_size=args.batch_size
+    )
+    num_steps = args.batch_size * len(train_dataloader)
+    lr_scheduler = LinearLR(
+        optimizer=optimizer, start_factor=1, end_factor=0.1, total_iters=num_steps
+    )
+
+    model.to(device)
+
+    for epoch in range(args.num_epoch):
+        model.train()
+        train(
+            model,
+            optimizer,
+            criterion,
+            train_dataloader,
+            device,
+            grad_scaler,
+            lr_scheduler,
+        )
+
+        model.eval()
+        val(model, val_dataloader, criterion, device)
