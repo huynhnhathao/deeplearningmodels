@@ -16,7 +16,10 @@ from tqdm.auto import tqdm
 import argparse
 
 
-from models.bert import MyBertTokenizer, BertForClassification, BertForClassifierConfig
+from models.bert import (
+    BertForClassification,
+    BertForClassifierConfig,
+)
 
 
 def val(
@@ -128,11 +131,11 @@ if __name__ == "__main__":
         "--num_epoch", type=int, default=5, help="number of epoch to train"
     )
 
-    parser.add_argument()
-
     args = parser.parse_args()
 
-    device = torch.device(args.device)
+    device = torch.device("cuda") if torch.cuda.is_available() else torch.device("cpu")
+
+    device = torch.device(device)
     config = BertForClassifierConfig(2, device)
     model = BertForClassification(config)
     criterion = CrossEntropyLoss()
@@ -151,7 +154,7 @@ if __name__ == "__main__":
     )
 
     model.to(device)
-
+    progress_bar = tqdm(range(args.num_epoch))
     for epoch in range(args.num_epoch):
         model.train()
         train(
@@ -166,3 +169,4 @@ if __name__ == "__main__":
 
         model.eval()
         val(model, val_dataloader, criterion, device)
+        progress_bar.update(1)
