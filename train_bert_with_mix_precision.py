@@ -173,3 +173,4 @@ if __name__ == "__main__":
 
         model.eval()
         val(model, val_dataloader, criterion, device)
+        torch.save(model.state_dict(), f"./bert_epoch{epoch}.pt")
