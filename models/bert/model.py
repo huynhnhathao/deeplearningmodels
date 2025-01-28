@@ -33,7 +33,7 @@ class BertConfig:
     # all dropout layers used in the model has this same dropout probability
     dropout_prob: float = 0.1
 
-    num_encoder_layers: int = 12
+    num_encoder_layers: int = 1
     layer_norm_eps: float = 1e-12
 
 
@@ -462,67 +462,3 @@ def test_forward_pass():
 if __name__ == "__main__":
     # Run the tests
     test_forward_pass()
-
-    # Original training code
-    device = torch.device("cuda") if torch.cuda.is_available() else torch.device("cpu")
-    config = BertForClassifierConfig(num_classes=2, device=device)
-    model = BertForClassification(config)
-    checkpoint_name = "bert-base-uncased"
-    model.from_pretrained(checkpoint_name)
-
-    tokenizer = BertTokenizer.from_pretrained(checkpoint_name)
-    raw_dataset = load_dataset("glue", "sst2")
-
-    def tokenize_function(example):
-        return tokenizer(example["sentence"], truncation=True)
-
-    tokenized_dataset = raw_dataset.map(tokenize_function, batched=True)
-
-    tokenized_dataset = tokenized_dataset.remove_columns(["sentence", "idx"])
-    tokenized_dataset = tokenized_dataset.rename_column("label", "labels")
-    tokenized_dataset.set_format("torch")
-    data_collator = DataCollatorWithPadding(tokenizer=tokenizer)
-
-    batch_size = 64
-    learning_rate = 5e-5
-    num_epochs = 5
-
-    train_dataloader = DataLoader(
-        tokenized_dataset["train"],
-        shuffle=True,
-        batch_size=batch_size,
-        collate_fn=data_collator,
-    )
-    val_dataloader = DataLoader(
-        tokenized_dataset["validation"],
-        shuffle=False,
-        batch_size=batch_size,
-        collate_fn=data_collator,
-    )
-    test_dataloader = DataLoader(
-        tokenized_dataset["test"],
-        shuffle=False,
-        batch_size=batch_size,
-        collate_fn=data_collator,
-    )
-
-    optimizer = torch.optim.AdamW(
-        params=model.parameters(),
-        lr=learning_rate,
-        eps=1e-8,
-        weight_decay=0.01,
-    )
-    criterion = torch.nn.CrossEntropyLoss()
-
-    scheduler = LinearLR(optimizer, 1, 0.2, num_epochs * len(train_dataloader))
-
-    train(
-        model,
-        optimizer,
-        criterion,
-        train_dataloader,
-        val_dataloader,
-        num_epochs,
-        device,
-        scheduler,
-    )
