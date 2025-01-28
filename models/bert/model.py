@@ -33,7 +33,7 @@ class BertConfig:
     # all dropout layers used in the model has this same dropout probability
     dropout_prob: float = 0.1
 
-    num_encoder_layers: int = 1
+    num_encoder_layers: int = 12
     layer_norm_eps: float = 1e-12
 
 

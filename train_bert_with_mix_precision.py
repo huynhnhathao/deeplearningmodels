@@ -99,6 +99,7 @@ def train(
     device: torch.device,
     grad_scaler: torch.amp.GradScaler,
     lr_scheduler: Optional[LRScheduler] = None,
+    progress_bar=None,
 ) -> None:
     for batch in train_dataloader:
         input_ids = batch["input_ids"].to(device)
@@ -119,6 +120,8 @@ def train(
 
         if lr_scheduler is not None:
             lr_scheduler.step()
+        if progress_bar is not None:
+            progress_bar.update(1)
 
 
 if __name__ == "__main__":
@@ -154,7 +157,7 @@ if __name__ == "__main__":
     )
 
     model.to(device)
-    progress_bar = tqdm(range(args.num_epoch))
+    progress_bar = tqdm(range(args.num_epoch * len(train_dataloader)))
     for epoch in range(args.num_epoch):
         model.train()
         train(
@@ -165,8 +168,8 @@ if __name__ == "__main__":
             device,
             grad_scaler,
             lr_scheduler,
+            progress_bar,
         )
 
         model.eval()
         val(model, val_dataloader, criterion, device)
-        progress_bar.update(1)
