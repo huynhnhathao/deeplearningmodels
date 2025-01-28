@@ -50,7 +50,7 @@ def val(
         correct = (predictions == labels).sum().item()
         correct_preds += correct
     logger.info(
-        f"Avg loss: {total_loss/len(dataloader)}, Accuracy: {correct_preds/num_examples}"
+        f"Validation loss: {total_loss/len(dataloader)}, Accuracy: {correct_preds/num_examples}"
     )
 
 
@@ -105,17 +105,27 @@ def train(
     lr_scheduler: Optional[LRScheduler] = None,
     progress_bar=None,
 ) -> None:
+    total_loss = 0
+    total_examples = 0
+    correct_preds = 0
+
     for batch in train_dataloader:
         input_ids = batch["input_ids"].to(device)
         token_type_ids = batch["token_type_ids"].to(device)
         attention_mask = batch["attention_mask"].to(device)
         labels = batch["labels"].to(device)
+        total_examples += len(labels)
 
         with torch.autocast(device_type=device.type, dtype=torch.bfloat16):
             logits = model(input_ids, token_type_ids, attention_mask)
             assert logits.dtype is torch.bfloat16
             loss = criterion(logits, labels)
             assert loss.dtype is torch.float32
+
+        total_loss += loss.item()
+        predictions = torch.argmax(logits, -1)
+        correct = (predictions == labels).sum().item()
+        correct_preds += correct
 
         grad_scaler.scale(loss).backward()
         grad_scaler.step(optimizer)
@@ -126,6 +136,10 @@ def train(
             lr_scheduler.step()
         if progress_bar is not None:
             progress_bar.update(1)
+
+    logger.info(
+        f"Training loss {total_loss/len(train_dataloader)}, Accuracy: {correct_preds / total_examples}"
+    )
 
 
 if __name__ == "__main__":
