@@ -25,28 +25,28 @@ from models.bert import (
 import logging
 
 
-def get_logger() -> logging.Logger:
-    logger = logging.getLogger()
+# def get_logger() -> logging.Logger:
+#     logger = logging.getLogger()
 
-    # Create handlers
-    console_handler = logging.StreamHandler(sys.stdout)  # Handler for console output
-    file_handler = logging.FileHandler(f"{__file__}.log")  # Handler for file output
-    # Set level for handlers
-    console_handler.setLevel(logging.INFO)
-    file_handler.setLevel(logging.INFO)  # File will log INFO and above
-    # Create formatters and add them to handlers
-    formatter = logging.Formatter("%(asctime)s - %(levelname)s - %(message)s")
-    console_handler.setFormatter(formatter)
-    file_handler.setFormatter(formatter)
+#     # Create handlers
+#     console_handler = logging.StreamHandler(sys.stdout)  # Handler for console output
+#     file_handler = logging.FileHandler(f"{__file__}.log")  # Handler for file output
+#     # Set level for handlers
+#     console_handler.setLevel(logging.INFO)
+#     file_handler.setLevel(logging.INFO)  # File will log INFO and above
+#     # Create formatters and add them to handlers
+#     formatter = logging.Formatter("%(asctime)s - %(levelname)s - %(message)s")
+#     console_handler.setFormatter(formatter)
+#     file_handler.setFormatter(formatter)
 
-    # Add handlers to the logger
-    logger.addHandler(console_handler)
-    logger.addHandler(file_handler)
+#     # Add handlers to the logger
+#     logger.addHandler(console_handler)
+#     logger.addHandler(file_handler)
 
-    return logger
+#     return logger
 
 
-logger = get_logger()
+# logger = get_logger()
 
 
 def val(
@@ -72,7 +72,7 @@ def val(
         predictions = torch.argmax(logits, -1)
         correct = (predictions == labels).sum().item()
         correct_preds += correct
-    logger.info(
+    print(
         f"Validation loss: {total_loss/len(dataloader)}, Accuracy: {correct_preds/num_examples}"
     )
 
@@ -160,7 +160,7 @@ def train(
         if progress_bar is not None:
             progress_bar.update(1)
 
-    logger.info(
+    print(
         f"Training loss {total_loss/len(train_dataloader)}, Accuracy: {correct_preds / total_examples}"
     )
 
@@ -196,15 +196,13 @@ if __name__ == "__main__":
     config = BertForClassifierConfig(2, device, args.cls_dropout_prob)
     model = BertForClassification(config)
     if args.state_dict_path != "":
-        logger.info(f"loading state dict from {args.state_dict_path}")
+        print(f"loading state dict from {args.state_dict_path}")
         model.load_state_dict(
             torch.load(args.state_dict_path, weights_only=True), strict=True
         )
     else:
         checkpoint = "bert-base-uncased"
-        logger.info(
-            f"loading pretrained weights from huggingface checkpoint {checkpoint}"
-        )
+        print(f"loading pretrained weights from huggingface checkpoint {checkpoint}")
         model.from_pretrained(checkpoint)
 
     criterion = CrossEntropyLoss()
@@ -221,7 +219,7 @@ if __name__ == "__main__":
 
     model.to(device)
     progress_bar = tqdm(range(args.num_epoch * len(train_dataloader)))
-    logger.info("Start training")
+    print("Start training")
     for epoch in range(args.num_epoch):
         model.train()
         train(
