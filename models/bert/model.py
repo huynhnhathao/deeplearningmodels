@@ -301,14 +301,9 @@ class BertForClassification(nn.Module):
         super().__init__()
         self.config = config
         self.bert = BertModel(config)
-        self.intermediate = nn.Linear(
-            config.hidden_dim, config.fcnn_middle_dim, bias=True
-        )
         self.classification_head = nn.Linear(
-            config.fcnn_middle_dim, config.num_classes, bias=True
+            config.hidden_dim, config.num_classes, bias=True
         )
-        self.cls_dropout = nn.Dropout(config.cls_dropout_prob)
-        self.cls_layer_norm = nn.LayerNorm(config.fcnn_middle_dim)
 
     def forward(
         self, input_ids, token_type_ids, attention_mask: torch.Tensor
@@ -327,9 +322,6 @@ class BertForClassification(nn.Module):
             position_ids.expand(batch_size, -1),
             attention_mask,
         )
-
-        pooled_output = F.gelu(self.intermediate(pooled_output))
-        pooled_output = self.cls_dropout(self.cls_layer_norm(pooled_output))
         return self.classification_head(pooled_output)
 
     def from_pretrained(self, model_name_or_path: str) -> None:
