@@ -184,11 +184,11 @@ if __name__ == "__main__":
     parser.add_argument(
         "--artifact_path",
         type=str,
-        default="~/workspace",
+        default="",
         help="path to folder to store model artifacts",
     )
     parser.add_argument(
-        "--state_dict_name",
+        "--state_dict_path",
         type=str,
         default="",
         help="path to the Pytorch saved state dict to continue training",
@@ -227,7 +227,7 @@ if __name__ == "__main__":
     with mlflow.start_run():
         log_training_config(training_config)
 
-        log_model_artifact(model, training_config.artifact_path)
+        # log_model_artifact(model, training_config.artifact_path)
 
         model.to(device)
         print("Start training")
