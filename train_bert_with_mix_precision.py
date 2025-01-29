@@ -1,5 +1,6 @@
 from typing import Callable, Optional, Tuple, List, Dict
-import sys
+
+import os
 
 from datasets import load_dataset
 
@@ -12,46 +13,22 @@ from torch.optim import Optimizer, AdamW
 from torch.optim.lr_scheduler import LinearLR, LRScheduler
 from torch.nn import CrossEntropyLoss
 
+import mlflow
 
 from tqdm.auto import tqdm
 import argparse
-
 
 from models.bert import (
     BertForClassification,
     BertForClassifierConfig,
 )
 
-import logging
-
-
-# def get_logger() -> logging.Logger:
-#     logger = logging.getLogger()
-
-#     # Create handlers
-#     console_handler = logging.StreamHandler(sys.stdout)  # Handler for console output
-#     file_handler = logging.FileHandler(f"{__file__}.log")  # Handler for file output
-#     # Set level for handlers
-#     console_handler.setLevel(logging.INFO)
-#     file_handler.setLevel(logging.INFO)  # File will log INFO and above
-#     # Create formatters and add them to handlers
-#     formatter = logging.Formatter("%(asctime)s - %(levelname)s - %(message)s")
-#     console_handler.setFormatter(formatter)
-#     file_handler.setFormatter(formatter)
-
-#     # Add handlers to the logger
-#     logger.addHandler(console_handler)
-#     logger.addHandler(file_handler)
-
-#     return logger
-
-
-# logger = get_logger()
+mlflow.set_experiment("finetune-bert-on-sst2")
 
 
 def val(
     model: nn.Module, dataloader: DataLoader, criterion: Callable, device: torch.device
-) -> None:
+) -> Tuple[float, float]:
     total_loss = 0
     correct_preds = 0
     num_examples = 0
@@ -72,9 +49,11 @@ def val(
         predictions = torch.argmax(logits, -1)
         correct = (predictions == labels).sum().item()
         correct_preds += correct
-    print(
-        f"Validation loss: {total_loss/len(dataloader)}, Accuracy: {correct_preds/num_examples}"
-    )
+
+    avg_val_loss = total_loss / len(dataloader)
+    val_acc = correct_preds / num_examples
+    print(f"Validation loss: {avg_val_loss}, Validation accuracy: {val_acc}")
+    return (avg_val_loss, val_acc)
 
 
 def get_sst2_dataloaders(
@@ -117,6 +96,22 @@ def get_sst2_dataloaders(
     return (train_dataloader, val_dataloader, test_dataloader)
 
 
+def log_training_config(training_config: argparse.Namespace):
+    mlflow.log_params(
+        {
+            "cls_dropout_prob": training_config.cls_dropout_prob,
+            "l2_regularization": training_config.l2_regularization,
+            "batch_size": training_config.batch_size,
+            "learning_rate": training_config.learning_rate,
+            "num_epoch": training_config.num_epoch,
+        }
+    )
+
+
+def log_model_artifact(model: nn.Module, artifact_path: str):
+    mlflow.log_artifact("bert_sst2_model_summary.txt", artifact_path)
+
+
 # train the model one epoch
 def train(
     model: nn.Module,
@@ -127,7 +122,7 @@ def train(
     grad_scaler: torch.amp.GradScaler,
     lr_scheduler: Optional[LRScheduler] = None,
     progress_bar=None,
-) -> None:
+) -> Tuple[float, float]:
     total_loss = 0
     total_examples = 0
     correct_preds = 0
@@ -160,9 +155,10 @@ def train(
         if progress_bar is not None:
             progress_bar.update(1)
 
-    print(
-        f"Training loss {total_loss/len(train_dataloader)}, Accuracy: {correct_preds / total_examples}"
-    )
+    avg_training_loss = total_loss / len(train_dataloader)
+    accuracy = correct_preds / total_examples
+    print(f"Training loss {avg_training_loss}, Training Accuracy: {accuracy}")
+    return (avg_training_loss, accuracy)
 
 
 if __name__ == "__main__":
@@ -172,7 +168,7 @@ if __name__ == "__main__":
         "--learning_rate", type=float, default=5e-5, help="learning rate for AdamW"
     )
     parser.add_argument(
-        "--num_epoch", type=int, default=5, help="number of epoch to train"
+        "--num_epoch", type=int, default=10, help="number of epoch to train"
     )
 
     parser.add_argument(
@@ -181,58 +177,86 @@ if __name__ == "__main__":
         default=0.3,
         help="dropout prob apply to the classification fcnn intermediate layer",
     )
+    parser.add_argument(
+        "--l2_regularization", type=float, default=0.05, help="optimizer weight decay"
+    )
 
     parser.add_argument(
-        "--state_dict_path",
+        "--artifact_path",
+        type=str,
+        default="~/workspace",
+        help="path to folder to store model artifacts",
+    )
+    parser.add_argument(
+        "--state_dict_name",
         type=str,
         default="",
         help="path to the Pytorch saved state dict to continue training",
     )
 
-    args = parser.parse_args()
+    training_config = parser.parse_args()
 
     device = torch.device("cuda") if torch.cuda.is_available() else torch.device("cpu")
-    device = torch.device(device)
-    config = BertForClassifierConfig(2, device, args.cls_dropout_prob)
+    config = BertForClassifierConfig(2, device, training_config.cls_dropout_prob)
     model = BertForClassification(config)
-    if args.state_dict_path != "":
-        print(f"loading state dict from {args.state_dict_path}")
+    criterion = CrossEntropyLoss()
+    grad_scaler = torch.amp.GradScaler(device.type)
+    optimizer = AdamW(
+        model.parameters(),
+        lr=training_config.learning_rate,
+        weight_decay=training_config.l2_regularization,
+    )
+    train_dataloader, val_dataloader, test_dataloader = get_sst2_dataloaders(
+        batch_size=training_config.batch_size
+    )
+    num_steps = training_config.batch_size * len(train_dataloader)
+    lr_scheduler = LinearLR(
+        optimizer=optimizer, start_factor=1, end_factor=0.1, total_iters=num_steps
+    )
+    progress_bar = tqdm(range(training_config.num_epoch * len(train_dataloader)))
+    if training_config.state_dict_path != "":
+        print(f"loading state dict from {training_config.state_dict_path}")
         model.load_state_dict(
-            torch.load(args.state_dict_path, weights_only=True), strict=True
+            torch.load(training_config.state_dict_path, weights_only=True), strict=True
         )
     else:
         checkpoint = "bert-base-uncased"
         print(f"loading pretrained weights from huggingface checkpoint {checkpoint}")
         model.from_pretrained(checkpoint)
 
-    criterion = CrossEntropyLoss()
-    grad_scaler = torch.amp.GradScaler(device.type)
+    with mlflow.start_run():
+        log_training_config(training_config)
 
-    optimizer = AdamW(model.parameters(), lr=args.learning_rate, weight_decay=0.05)
-    train_dataloader, val_dataloader, test_dataloader = get_sst2_dataloaders(
-        batch_size=args.batch_size
-    )
-    num_steps = args.batch_size * len(train_dataloader)
-    lr_scheduler = LinearLR(
-        optimizer=optimizer, start_factor=1, end_factor=0.1, total_iters=num_steps
-    )
+        log_model_artifact(model, training_config.artifact_path)
 
-    model.to(device)
-    progress_bar = tqdm(range(args.num_epoch * len(train_dataloader)))
-    print("Start training")
-    for epoch in range(args.num_epoch):
-        model.train()
-        train(
-            model,
-            optimizer,
-            criterion,
-            train_dataloader,
-            device,
-            grad_scaler,
-            lr_scheduler,
-            progress_bar,
-        )
+        model.to(device)
+        print("Start training")
+        for epoch in range(training_config.num_epoch):
+            model.train()
+            avg_training_loss, training_acc = train(
+                model,
+                optimizer,
+                criterion,
+                train_dataloader,
+                device,
+                grad_scaler,
+                lr_scheduler,
+                progress_bar,
+            )
 
-        model.eval()
-        val(model, val_dataloader, criterion, device)
-        torch.save(model.state_dict(), f"./bert_epoch{epoch}.pt")
+            model.eval()
+            with torch.no_grad():
+                avg_val_loss, val_acc = val(model, val_dataloader, criterion, device)
+            state_dict_file_path = os.path.join(
+                training_config.artifact_path, f"./bert_epoch{epoch}.pt"
+            )
+            torch.save(model.state_dict(), state_dict_file_path)
+
+            mlflow.log_metrics(
+                {"training_loss": avg_training_loss, "training_acc": training_acc},
+                step=epoch,
+            )
+
+            mlflow.log_metrics(
+                {"val_loss": avg_val_loss, "val_acc": val_acc}, step=epoch
+            )
