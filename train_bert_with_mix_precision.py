@@ -248,7 +248,7 @@ if __name__ == "__main__":
             with torch.no_grad():
                 avg_val_loss, val_acc = val(model, val_dataloader, criterion, device)
             state_dict_file_path = os.path.join(
-                training_config.artifact_path, f"./bert_epoch{epoch}.pt"
+                training_config.artifact_path, f"bert_epoch{epoch}.pt"
             )
             torch.save(model.state_dict(), state_dict_file_path)
 
