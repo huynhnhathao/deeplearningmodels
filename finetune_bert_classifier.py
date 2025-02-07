@@ -99,7 +99,7 @@ if __name__ == "__main__":
         help="dropout prob apply to the classification fcnn intermediate layer",
     )
     parser.add_argument(
-        "--l2_regularization", type=float, default=0.001, help="optimizer weight decay"
+        "--l2_regularization", type=float, default=0, help="optimizer weight decay"
     )
 
     parser.add_argument(
@@ -132,7 +132,7 @@ if __name__ == "__main__":
     )
     num_steps = training_config.num_epoch * len(train_dataloader)
     lr_scheduler = LinearLR(
-        optimizer=optimizer, start_factor=1, end_factor=0.05, total_iters=num_steps
+        optimizer=optimizer, start_factor=1, end_factor=0.1, total_iters=num_steps
     )
     progress_bar = tqdm(range(training_config.num_epoch * len(train_dataloader)))
 

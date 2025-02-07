@@ -31,7 +31,7 @@ def val(
         total_loss += loss.item()
 
         y_pred.extend(torch.argmax(logits, -1).tolist())
-        y_true.extend(labels)
+        y_true.extend(labels.tolist())
 
     avg_val_loss = total_loss / len(dataloader)
 

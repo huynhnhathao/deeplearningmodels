@@ -428,9 +428,18 @@ class BertForClassificationWithHFBertBase(nn.Module):
         self.bert_base = TransformerBertModel.from_pretrained(check_point_name)
         self.classifier = nn.Linear(hidden_size, num_classes, bias=True)
 
-    def forward(self, input: torch.Tensor) -> torch.Tensor:
-        hidden_states = self.bert_base(input)
-        cls_embeddings = hidden_states[:, 0, :]
+    def forward(
+        self,
+        input_ids: torch.Tensor,
+        token_type_ids: torch.Tensor,
+        attention_mask: torch.Tensor,
+    ) -> torch.Tensor:
+        hidden_states = self.bert_base(
+            input_ids=input_ids,
+            token_type_ids=token_type_ids,
+            attention_mask=attention_mask,
+        )
+        cls_embeddings = hidden_states.last_hidden_state[:, 0, :]
         logits = self.classifier(cls_embeddings)
         return logits
 
