@@ -9,7 +9,7 @@ from transformers import DataCollatorWithPadding, BertTokenizer
 import torch
 from torch import nn
 from torch.utils.data import DataLoader
-from torch.optim import Optimizer, AdamW
+from torch.optim import Optimizer, Adam
 from torch.optim.lr_scheduler import LinearLR, LRScheduler
 from torch.nn import CrossEntropyLoss
 
@@ -17,6 +17,8 @@ import mlflow
 
 from tqdm.auto import tqdm
 import argparse
+
+from sklearn.metrics import f1_score
 
 from models.bert import (
     BertForClassification,
@@ -201,7 +203,7 @@ if __name__ == "__main__":
     model = BertForClassification(config)
     criterion = CrossEntropyLoss()
     grad_scaler = torch.amp.GradScaler(device.type)
-    optimizer = AdamW(
+    optimizer = Adam(
         model.parameters(),
         lr=training_config.learning_rate,
         weight_decay=training_config.l2_regularization,
