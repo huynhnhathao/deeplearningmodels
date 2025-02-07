@@ -420,6 +420,21 @@ class BertForClassification(nn.Module):
         self.load_state_dict(new_state_dict, strict=False)
 
 
+class BertForClassificationWithHFBertBase(nn.Module):
+    def __init__(
+        self, num_classes: int, hidden_size: int, check_point_name: str
+    ) -> None:
+        super().__init__()
+        self.bert_base = TransformerBertModel.from_pretrained(check_point_name)
+        self.classifier = nn.Linear(hidden_size, num_classes, bias=True)
+
+    def forward(self, input: torch.Tensor) -> torch.Tensor:
+        hidden_states = self.bert_base(input)
+        cls_embeddings = hidden_states[:, 0, :]
+        logits = self.classifier(cls_embeddings)
+        return logits
+
+
 def params_count(model: nn.Module) -> int:
     return sum(p.numel() for p in model.parameters())
 

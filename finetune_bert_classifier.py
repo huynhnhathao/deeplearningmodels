@@ -18,17 +18,12 @@ import mlflow
 from tqdm.auto import tqdm
 import argparse
 
-from sklearn.metrics import f1_score
 
-from models.bert import (
-    BertForClassification,
-    BertForClassifierConfig,
-    BertForClassificationWithHFBertBase,
-)
+from models.bert import BertForClassificationWithHFBertBase
 
 from trainer import train, val
 
-mlflow.set_experiment("finetune-bert-on-sst2-with-custom-implementation")
+mlflow.set_experiment("finetune-bert-on-sst2-with-hf-implementation")
 
 
 def get_sst2_dataloaders(
@@ -123,8 +118,8 @@ if __name__ == "__main__":
     training_config = parser.parse_args()
 
     device = torch.device("cuda") if torch.cuda.is_available() else torch.device("cpu")
-    config = BertForClassifierConfig(2, device, training_config.cls_dropout_prob)
-    model = BertForClassification(config)
+    model = BertForClassificationWithHFBertBase(2, 768, "bert-base-uncased")
+
     criterion = CrossEntropyLoss()
     grad_scaler = torch.amp.GradScaler(device.type)
     optimizer = Adam(
@@ -140,16 +135,6 @@ if __name__ == "__main__":
         optimizer=optimizer, start_factor=1, end_factor=0.05, total_iters=num_steps
     )
     progress_bar = tqdm(range(training_config.num_epoch * len(train_dataloader)))
-
-    if training_config.state_dict_path != "":
-        print(f"loading state dict from {training_config.state_dict_path}")
-        model.load_state_dict(
-            torch.load(training_config.state_dict_path, weights_only=True), strict=True
-        )
-    else:
-        checkpoint = "bert-base-uncased"
-        print(f"loading pretrained weights from huggingface checkpoint {checkpoint}")
-        model.from_pretrained(checkpoint)
 
     with mlflow.start_run():
         log_training_config(training_config)
