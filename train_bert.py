@@ -20,11 +20,10 @@ from torch import nn
 os.environ["CUDA_VISIBLE_DEVICES"] = "1"
 
 ##Loading the Dataset
-dataset = load_from_disk("/data2/home/xuexy/myfiles/local_sst2")
+dataset = load_dataset("glue", "sst2")
 print(dataset["train"][100])
 
-tokenizer = AutoTokenizer.from_pretrained("/data2/home/xuexy/memba370")
-# tokenizer = AutoTokenizer.from_pretrained("/data2/home/xuexy/myfiles/pretrained_model/bert_uncased")
+tokenizer = AutoTokenizer.from_pretrained("bert-base-uncased")
 
 max_length = 128
 
