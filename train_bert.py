@@ -17,7 +17,7 @@ import evaluate
 from torch import nn
 
 ## Setting up the Environment
-os.environ["CUDA_VISIBLE_DEVICES"] = "0"
+# os.environ["CUDA_VISIBLE_DEVICES"] = "0"
 
 ##Loading the Dataset
 dataset = load_dataset("glue", "sst2")
@@ -63,7 +63,7 @@ class ClassificationModel(nn.Module):
         loss = None
         if labels is not None:
             loss_fct = nn.CrossEntropyLoss()
-            labels = labels.type(torch.LongTensor)
+            labels = labels.type(torch.LongTensor).cuda()
             loss = loss_fct(logits, labels)
         return (loss, logits) if loss is not None else logits
 
