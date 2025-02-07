@@ -65,10 +65,8 @@ class ClassificationModel(nn.Module):
 
 
 ##Loading the Base Model
-config = AutoConfig.from_pretrained("/data2/home/xuexy/memba370", num_labels=2)
-# config = AutoConfig.from_pretrained("/data2/home/xuexy/myfiles/pretrained_model/bert_uncased", num_labels=2)
-base_model = AutoModel.from_pretrained("/data2/home/xuexy/memba370", config=config)
-# base_model = AutoModel.from_pretrained("/data2/home/xuexy/myfiles/pretrained_model/bert_uncased", config=config)
+config = AutoConfig.from_pretrained("bert-base-uncased", num_labels=2)
+base_model = AutoModel.from_pretrained("bert-base-uncased", config=config)
 model = ClassificationModel(base_model, num_labels=2)
 
 
