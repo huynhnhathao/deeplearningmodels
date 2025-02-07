@@ -316,13 +316,13 @@ class BertForClassification(nn.Module):
             input_ids = input_ids[:, : self.config.max_sequence_length]
         position_ids = torch.arange(0, sequence_length, device=self.config.device)
 
-        (_, pooled_output) = self.bert(
+        (hidden_states, pooled_output) = self.bert(
             input_ids,
             token_type_ids,
             position_ids.expand(batch_size, -1),
             attention_mask,
         )
-        return self.classification_head(pooled_output)
+        return self.classification_head(hidden_states[:, 0, :])
 
     def from_pretrained(self, model_name_or_path: str) -> None:
         """
