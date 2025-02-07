@@ -180,7 +180,7 @@ if __name__ == "__main__":
         help="dropout prob apply to the classification fcnn intermediate layer",
     )
     parser.add_argument(
-        "--l2_regularization", type=float, default=0.05, help="optimizer weight decay"
+        "--l2_regularization", type=float, default=0.001, help="optimizer weight decay"
     )
 
     parser.add_argument(
@@ -211,11 +211,12 @@ if __name__ == "__main__":
     train_dataloader, val_dataloader, test_dataloader = get_sst2_dataloaders(
         batch_size=training_config.batch_size
     )
-    num_steps = training_config.batch_size * len(train_dataloader)
+    num_steps = training_config.num_epoch * len(train_dataloader)
     lr_scheduler = LinearLR(
         optimizer=optimizer, start_factor=1, end_factor=0.05, total_iters=num_steps
     )
     progress_bar = tqdm(range(training_config.num_epoch * len(train_dataloader)))
+
     if training_config.state_dict_path != "":
         print(f"loading state dict from {training_config.state_dict_path}")
         model.load_state_dict(
@@ -255,10 +256,12 @@ if __name__ == "__main__":
             torch.save(model.state_dict(), state_dict_file_path)
 
             mlflow.log_metrics(
-                {"training_loss": avg_training_loss, "training_acc": training_acc},
+                {
+                    "training_loss": avg_training_loss,
+                    "training_acc": training_acc,
+                    "val_loss": avg_val_loss,
+                    "val_acc": val_acc,
+                    "learning_rate": lr_scheduler.get_last_lr()[0],
+                },
                 step=epoch,
-            )
-
-            mlflow.log_metrics(
-                {"val_loss": avg_val_loss, "val_acc": val_acc}, step=epoch
             )
