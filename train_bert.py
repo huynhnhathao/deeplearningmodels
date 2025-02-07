@@ -78,8 +78,8 @@ model = ClassificationModel(base_model, num_labels=2)
 def compute_metrics(eval_pred):
     logits, labels = eval_pred
     predictions = np.argmax(logits, axis=-1)
-    print("logits: ", logits, " labels: ", labels)
-    print("eval_pred: ", eval_pred, " predictions: ", predictions)
+    # print("logits: ", logits, " labels: ", labels)
+    # print("eval_pred: ", eval_pred, " predictions: ", predictions)
     return {"accuracy": accuracy_score(labels, predictions)}
 
 
