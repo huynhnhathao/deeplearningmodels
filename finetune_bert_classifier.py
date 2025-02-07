@@ -21,7 +21,7 @@ import argparse
 
 from models.bert import BertForClassificationWithHFBertBase
 
-from trainer import train, val
+from models.bert.trainer import train, val
 
 mlflow.set_experiment("finetune-bert-on-sst2-with-hf-implementation")
 
