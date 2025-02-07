@@ -17,7 +17,7 @@ import evaluate
 from torch import nn
 
 ## Setting up the Environment
-os.environ["CUDA_VISIBLE_DEVICES"] = "1"
+os.environ["CUDA_VISIBLE_DEVICES"] = "0"
 
 ##Loading the Dataset
 dataset = load_dataset("glue", "sst2")
