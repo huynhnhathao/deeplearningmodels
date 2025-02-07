@@ -45,7 +45,11 @@ test_dataset = tokenized_datasets["test"].shuffle(seed=42).select(range(500))
 
 ##Model Definition
 class ClassificationModel(nn.Module):
-    def __init__(self, base_model, num_labels=2):
+    def __init__(
+        self,
+        base_model,
+        num_labels=2,
+    ):
         super(ClassificationModel, self).__init__()
         self.base_model = base_model
         self.classifier = nn.Linear(base_model.config.hidden_size, num_labels)
@@ -59,7 +63,7 @@ class ClassificationModel(nn.Module):
         loss = None
         if labels is not None:
             loss_fct = nn.CrossEntropyLoss()
-            labels = labels.type(torch.LongTensor).cuda()
+            labels = labels.type(torch.LongTensor)
             loss = loss_fct(logits, labels)
         return (loss, logits) if loss is not None else logits
 
