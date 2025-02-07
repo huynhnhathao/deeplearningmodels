@@ -170,7 +170,7 @@ if __name__ == "__main__":
         "--learning_rate", type=float, default=5e-5, help="learning rate for AdamW"
     )
     parser.add_argument(
-        "--num_epoch", type=int, default=10, help="number of epoch to train"
+        "--num_epoch", type=int, default=3, help="number of epoch to train"
     )
 
     parser.add_argument(
@@ -212,7 +212,9 @@ if __name__ == "__main__":
         batch_size=training_config.batch_size
     )
     num_steps = training_config.batch_size * len(train_dataloader)
-    lr_scheduler = LinearLR(optimizer=optimizer, total_iters=num_steps)
+    lr_scheduler = LinearLR(
+        optimizer=optimizer, start_factor=1, end_factor=0.05, total_iters=num_steps
+    )
     progress_bar = tqdm(range(training_config.num_epoch * len(train_dataloader)))
     if training_config.state_dict_path != "":
         print(f"loading state dict from {training_config.state_dict_path}")
