@@ -53,7 +53,7 @@ class BertEmbedding(nn.Module):
         self.token_type_embedding = nn.Embedding(
             config.type_vocab_size, config.hidden_dim
         )
-        self.embedding = nn.Embedding(
+        self.words_embedding = nn.Embedding(
             config.vocab_size, config.hidden_dim, padding_idx=config.padding_token_id
         )
         # the original transformers encoder applies dropout to the sum of embeddings and positional embeddings
@@ -73,7 +73,7 @@ class BertEmbedding(nn.Module):
         position_ids: count from 0 at the start of the sequence to max_sequence_length
         """
         embeddings = (
-            self.embedding(token_ids)
+            self.words_embedding(token_ids)
             + self.token_type_embedding(token_type_ids)
             + self.position_embedding(position_ids)
         )
@@ -88,38 +88,32 @@ class EncoderLayer(nn.Module):
             config.hidden_dim,
             config.num_heads,
             config.dropout_prob,
+            config.layer_norm_eps
         )
 
-        self.self_attention_layer_norm = nn.LayerNorm(
-            config.hidden_dim, config.layer_norm_eps, bias=True
-        )
-
-        self.ffnn = FFNN(config.hidden_dim, config.fcnn_middle_dim, config.dropout_prob)
-
-        self.ffnn_layer_norm = nn.LayerNorm(config.hidden_dim, config.layer_norm_eps)
+        self.ffnn = FFNN(config.hidden_dim, config.fcnn_middle_dim, config.dropout_prob, config.layer_norm_eps)
 
     def forward(
         self, hidden_states: torch.Tensor, attention_mask: torch.Tensor
     ) -> torch.Tensor:
-        attention_output = self.multi_head_self_attention(hidden_states, attention_mask)
-        hidden_states = self.self_attention_layer_norm(attention_output + hidden_states)
-        hidden_states = self.ffnn_layer_norm(hidden_states + self.ffnn(hidden_states))
+        attention_output = self.multi_head_self_attention(hidden_states.clone(), attention_mask)
+        hidden_states =  self.ffnn(attention_output)
         return hidden_states
 
 
 class FFNN(nn.Module):
-    def __init__(self, hidden_dim: int, middle_dim: int, dropout_prob: float) -> None:
+    def __init__(self, hidden_dim: int, middle_dim: int, dropout_prob: float, layer_norm_eps: float) -> None:
         super().__init__()
-        self.intermediate = nn.Linear(hidden_dim, middle_dim, bias=True)
-        self.output = nn.Linear(middle_dim, hidden_dim, bias=True)
+        self.intermediate_dense = nn.Linear(hidden_dim, middle_dim, bias=True)
+        self.last_dense = nn.Linear(middle_dim, hidden_dim, bias=True)
         self.gelu = nn.GELU(approximate="tanh")
         self.dropout = nn.Dropout(dropout_prob)
-
-    def forward(self, hidden_states: torch.Tensor) -> torch.Tensor:
-        hidden_states = self.intermediate(hidden_states)
+        self.layer_norm = nn.LayerNorm(hidden_dim, eps=layer_norm_eps)
+    def forward(self, inputs: torch.Tensor) -> torch.Tensor:
+        hidden_states = self.intermediate_dense(inputs)
         hidden_states = self.gelu(hidden_states)
-        hidden_states = self.output(hidden_states)
-        return self.dropout(hidden_states)
+        hidden_states = self.last_dense(hidden_states)
+        return self.layer_norm(self.dropout(hidden_states) + inputs)
 
 
 class MultiHeadSelfAttention(nn.Module):
@@ -127,14 +121,15 @@ class MultiHeadSelfAttention(nn.Module):
         self,
         hidden_dim: int,
         num_heads: int,
-        attention_dropout_prob: float,
+        dropout_prob: float,
+        layer_norm_eps: float
     ):
         """
         Transformer Self-attention
             Args
                 - hidden_dim: size of the token embedding and hidden_state
                 - num_heads: number of attention head
-                - attention_dropout_prob: dropout probability apply to the attention scores,
+                - dropout_prob: dropout probability apply to the attention scores,
                     practically mean randomly prevent the attention to attend to some random tokens
                 - linear_dropout_prob: dropout prob apply to the linear layer after the self-attention layer
         """
@@ -154,9 +149,10 @@ class MultiHeadSelfAttention(nn.Module):
         self.K = nn.Linear(self.hidden_dim, self.hidden_dim, bias=True)
         self.V = nn.Linear(self.hidden_dim, self.hidden_dim, bias=True)
 
-        self.attention_dropout = nn.Dropout(attention_dropout_prob)
+        self.attention_dropout = nn.Dropout(dropout_prob)
         self.dense = nn.Linear(hidden_dim, hidden_dim, bias=True)
-        self.dropout = nn.Dropout(attention_dropout_prob)
+        self.dropout = nn.Dropout(dropout_prob)
+        self.layer_norm = nn.LayerNorm(hidden_dim, layer_norm_eps)
 
     def forward(
         self,
@@ -204,8 +200,8 @@ class MultiHeadSelfAttention(nn.Module):
         # (batch_size, sequence_length, hidden_dim)
         # this is the "concat then linear projection step" in the Attention is all you need paper
         attention_values = attention_values.view(batch_size, sequence_length, -1)
-        attention_values_linear_projected = self.dense(attention_values)
-        return self.dropout(attention_values_linear_projected)
+        attention_values = self.dense(attention_values)
+        return self.layer_norm(self.dropout(attention_values) + hidden_states)
 
 
 class BertEncoder(nn.Module):
@@ -245,7 +241,6 @@ class BertModel(nn.Module):
         super().__init__()
         self.embedding = BertEmbedding(config)
         self.encoder = BertEncoder(config)
-        self.pooler = BertPooler(config.hidden_dim)
         self.max_sequence_length = config.max_sequence_length
 
     def forward(
@@ -254,7 +249,7 @@ class BertModel(nn.Module):
         token_type_ids: torch.Tensor,
         position_ids: torch.Tensor,
         attention_mask: torch.Tensor,
-    ) -> tuple[torch.Tensor, torch.Tensor]:
+    ) -> tuple[torch.Tensor]:
         """
         Input tensors to this module is expected to be already padded to the model's max_sequence_length
         """
@@ -267,8 +262,7 @@ class BertModel(nn.Module):
         embeddings = self.embedding(token_ids, token_type_ids, position_ids)
         # hidden_states shape (batch_size, sequence_length, hidden_dim)
         hidden_states: torch.Tensor = self.encoder(embeddings, attention_mask)
-        pooled_output: torch.Tensor = self.pooler(hidden_states)
-        return (hidden_states, pooled_output)
+        return (hidden_states, )
 
     def validate_input_dimension(
         self,
@@ -320,15 +314,15 @@ class BertForClassification(nn.Module):
             input_ids = input_ids[:, : self.config.max_sequence_length]
         position_ids = torch.arange(0, sequence_length, device=self.config.device)
 
-        (hidden_states, _) = self.bert(
+        hidden_states = self.bert(
             input_ids,
             token_type_ids,
             position_ids.expand(batch_size, -1),
             attention_mask,
         )
-        return self.classification_head(hidden_states[:, 0, :])
-
-    def from_pretrained(self, model_name_or_path: str) -> None:
+        return self.classification_head(hidden_states[0][:, 0, :])
+    
+    def from_pretrained(self, model_name_or_path: str) -> nn.Module:
         """
         Load weights of a model identifier from huggingface's model hub
         """
@@ -337,7 +331,7 @@ class BertForClassification(nn.Module):
         )
         state_dict_mapping = {
             # Embedding layers
-            "embeddings.word_embeddings.weight": "bert.embedding.embedding.weight",
+            "embeddings.word_embeddings.weight": "bert.embedding.words_embedding.weight",
             "embeddings.position_embeddings.weight": "bert.embedding.position_embedding.weight",
             "embeddings.token_type_embeddings.weight": "bert.embedding.token_type_embedding.weight",
             "embeddings.LayerNorm.weight": "bert.embedding.layer_norm.weight",
@@ -368,48 +362,46 @@ class BertForClassification(nn.Module):
                 for i in range(self.config.num_encoder_layers)
             },
             **{
-                f"encoder.layer.{i}.attention.output.dense.weight": f"bert.encoder.encoder_layers.{i}.multi_head_self_attention.attention_output.weight"
+                f"encoder.layer.{i}.attention.output.dense.weight": f"bert.encoder.encoder_layers.{i}.multi_head_self_attention.dense.weight"
                 for i in range(self.config.num_encoder_layers)
             },
             **{
-                f"encoder.layer.{i}.attention.output.dense.bias": f"bert.encoder.encoder_layers.{i}.multi_head_self_attention.attention_output.bias"
+                f"encoder.layer.{i}.attention.output.dense.bias": f"bert.encoder.encoder_layers.{i}.multi_head_self_attention.dense.bias"
                 for i in range(self.config.num_encoder_layers)
             },
             **{
-                f"encoder.layer.{i}.attention.output.LayerNorm.weight": f"bert.encoder.encoder_layers.{i}.self_attention_layer_norm.weight"
+                f"encoder.layer.{i}.attention.output.LayerNorm.weight": f"bert.encoder.encoder_layers.{i}.multi_head_self_attention.layer_norm.weight"
                 for i in range(self.config.num_encoder_layers)
             },
             **{
-                f"encoder.layer.{i}.attention.output.LayerNorm.bias": f"bert.encoder.encoder_layers.{i}.self_attention_layer_norm.bias"
+                f"encoder.layer.{i}.attention.output.LayerNorm.bias": f"bert.encoder.encoder_layers.{i}.multi_head_self_attention.layer_norm.bias"
                 for i in range(self.config.num_encoder_layers)
             },
             **{
-                f"encoder.layer.{i}.intermediate.dense.weight": f"bert.encoder.encoder_layers.{i}.fcnn.intermediate.weight"
+                f"encoder.layer.{i}.intermediate.dense.weight": f"bert.encoder.encoder_layers.{i}.ffnn.intermediate_dense.weight"
                 for i in range(self.config.num_encoder_layers)
             },
             **{
-                f"encoder.layer.{i}.intermediate.dense.bias": f"bert.encoder.encoder_layers.{i}.fcnn.intermediate.bias"
+                f"encoder.layer.{i}.intermediate.dense.bias": f"bert.encoder.encoder_layers.{i}.ffnn.intermediate_dense.bias"
                 for i in range(self.config.num_encoder_layers)
             },
             **{
-                f"encoder.layer.{i}.output.dense.weight": f"bert.encoder.encoder_layers.{i}.fcnn.output.weight"
+                f"encoder.layer.{i}.output.dense.weight": f"bert.encoder.encoder_layers.{i}.ffnn.last_dense.weight"
                 for i in range(self.config.num_encoder_layers)
             },
             **{
-                f"encoder.layer.{i}.output.dense.bias": f"bert.encoder.encoder_layers.{i}.fcnn.output.bias"
+                f"encoder.layer.{i}.output.dense.bias": f"bert.encoder.encoder_layers.{i}.ffnn.last_dense.bias"
                 for i in range(self.config.num_encoder_layers)
             },
             **{
-                f"encoder.layer.{i}.output.LayerNorm.weight": f"bert.encoder.encoder_layers.{i}.fcnn_layer_norm.weight"
+                f"encoder.layer.{i}.output.LayerNorm.weight": f"bert.encoder.encoder_layers.{i}.ffnn.layer_norm.weight"
                 for i in range(self.config.num_encoder_layers)
             },
             **{
-                f"encoder.layer.{i}.output.LayerNorm.bias": f"bert.encoder.encoder_layers.{i}.fcnn_layer_norm.bias"
+                f"encoder.layer.{i}.output.LayerNorm.bias": f"bert.encoder.encoder_layers.{i}.ffnn.layer_norm.bias"
                 for i in range(self.config.num_encoder_layers)
             },
-            # Pooler layer
-            "pooler.dense.weight": "bert.pooler.linear.weight",
-            "pooler.dense.bias": "bert.pooler.linear.bias",
+
         }
         pretrained_state_dict = pretrained_model.state_dict()
         new_state_dict = {}
