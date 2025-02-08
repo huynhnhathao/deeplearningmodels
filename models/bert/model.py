@@ -181,7 +181,7 @@ class MultiHeadSelfAttention(nn.Module):
             queries,
             keys,
             values,
-            attn_mask=attention_mask,
+            attn_mask=attention_mask.unsqueeze(1).unsqueeze(-1).float(),
             dropout_p=self.dropout_prob if self.training else 0.0,
             is_causal=False,
         )
