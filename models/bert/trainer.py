@@ -11,7 +11,10 @@ from sklearn.metrics import f1_score, accuracy_score
 
 
 def val(
-    model: nn.Module, dataloader: DataLoader, criterion: Callable, device: torch.device
+    model: nn.Module,
+    dataloader: DataLoader,
+    criterion: Callable[[torch.Tensor, torch.Tensor], torch.Tensor],
+    device: torch.device
 ) -> Tuple[float, float, float]:
     total_loss = 0
     num_examples = 0

@@ -39,12 +39,9 @@ class BertConfig:
 
 @dataclass
 class BertForClassifierConfig(BertConfig):
-    def __init__(
-        self, num_classes: int, device: torch.device, cls_dropout_prob: float = 0.5
-    ) -> None:
+    def __init__(self, num_classes: int, device: torch.device) -> None:
         self.num_classes = num_classes
         self.device = device
-        self.cls_dropout_prob = cls_dropout_prob
 
 
 class BertEmbedding(nn.Module):
@@ -97,16 +94,16 @@ class EncoderLayer(nn.Module):
             config.hidden_dim, config.layer_norm_eps, bias=True
         )
 
-        self.fcnn = FFNN(config.hidden_dim, config.fcnn_middle_dim, config.dropout_prob)
+        self.ffnn = FFNN(config.hidden_dim, config.fcnn_middle_dim, config.dropout_prob)
 
-        self.fcnn_layer_norm = nn.LayerNorm(config.hidden_dim, config.layer_norm_eps)
+        self.ffnn_layer_norm = nn.LayerNorm(config.hidden_dim, config.layer_norm_eps)
 
-    def forward(self, hidden_states, attention_mask: torch.Tensor) -> torch.Tensor:
-        hidden_states = self.self_attention_layer_norm(
-            hidden_states
-            + self.multi_head_self_attention(hidden_states, attention_mask)
-        )
-        hidden_states = self.fcnn_layer_norm(hidden_states + self.fcnn(hidden_states))
+    def forward(
+        self, hidden_states: torch.Tensor, attention_mask: torch.Tensor
+    ) -> torch.Tensor:
+        attention_output = self.multi_head_self_attention(hidden_states, attention_mask)
+        hidden_states = self.self_attention_layer_norm(attention_output + hidden_states)
+        hidden_states = self.ffnn_layer_norm(hidden_states + self.ffnn(hidden_states))
         return hidden_states
 
 
@@ -119,9 +116,10 @@ class FFNN(nn.Module):
         self.dropout = nn.Dropout(dropout_prob)
 
     def forward(self, hidden_states: torch.Tensor) -> torch.Tensor:
-        hidden_states = self.dropout(self.gelu(self.intermediate(hidden_states)))
-        hidden_states = self.gelu(self.output(hidden_states))
-        return hidden_states
+        hidden_states = self.intermediate(hidden_states)
+        hidden_states = self.gelu(hidden_states)
+        hidden_states = self.output(hidden_states)
+        return self.dropout(hidden_states)
 
 
 class MultiHeadSelfAttention(nn.Module):
@@ -157,8 +155,8 @@ class MultiHeadSelfAttention(nn.Module):
         self.V = nn.Linear(self.hidden_dim, self.hidden_dim, bias=True)
 
         self.attention_dropout = nn.Dropout(attention_dropout_prob)
-        self.attention_output = nn.Linear(hidden_dim, hidden_dim, bias=True)
-        self.attention_output_dropout = nn.Dropout(attention_dropout_prob)
+        self.dense = nn.Linear(hidden_dim, hidden_dim, bias=True)
+        self.dropout = nn.Dropout(attention_dropout_prob)
 
     def forward(
         self,
@@ -206,7 +204,8 @@ class MultiHeadSelfAttention(nn.Module):
         # (batch_size, sequence_length, hidden_dim)
         # this is the "concat then linear projection step" in the Attention is all you need paper
         attention_values = attention_values.view(batch_size, sequence_length, -1)
-        return self.attention_output_dropout(self.attention_output(attention_values))
+        attention_values_linear_projected = self.dense(attention_values)
+        return self.dropout(attention_values_linear_projected)
 
 
 class BertEncoder(nn.Module):
@@ -216,7 +215,9 @@ class BertEncoder(nn.Module):
             [EncoderLayer(config) for _ in range(config.num_encoder_layers)]
         )
 
-    def forward(self, hidden_states, attention_mask: torch.Tensor) -> torch.Tensor:
+    def forward(
+        self, hidden_states: torch.Tensor, attention_mask: torch.Tensor
+    ) -> torch.Tensor:
         for layer in self.encoder_layers:
             hidden_states = layer(hidden_states, attention_mask)
 
@@ -263,9 +264,9 @@ class BertModel(nn.Module):
 
         # input_ids shape: (batch_size, sequence_length)
         # sequence_length must match the max_sequence_length, this module expects all padding be done before it
-        embedding = self.embedding(token_ids, token_type_ids, position_ids)
+        embeddings = self.embedding(token_ids, token_type_ids, position_ids)
         # hidden_states shape (batch_size, sequence_length, hidden_dim)
-        hidden_states: torch.Tensor = self.encoder(embedding, attention_mask)
+        hidden_states: torch.Tensor = self.encoder(embeddings, attention_mask)
         pooled_output: torch.Tensor = self.pooler(hidden_states)
         return (hidden_states, pooled_output)
 
@@ -306,7 +307,10 @@ class BertForClassification(nn.Module):
         )
 
     def forward(
-        self, input_ids, token_type_ids, attention_mask: torch.Tensor
+        self,
+        input_ids: torch.Tensor,
+        token_type_ids: torch.Tensor,
+        attention_mask: torch.Tensor,
     ) -> torch.Tensor:
         batch_size, sequence_length = input_ids.size()
         if sequence_length > self.config.max_sequence_length:
@@ -316,7 +320,7 @@ class BertForClassification(nn.Module):
             input_ids = input_ids[:, : self.config.max_sequence_length]
         position_ids = torch.arange(0, sequence_length, device=self.config.device)
 
-        (hidden_states, pooled_output) = self.bert(
+        (hidden_states, _) = self.bert(
             input_ids,
             token_type_ids,
             position_ids.expand(batch_size, -1),

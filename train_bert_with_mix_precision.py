@@ -1,4 +1,4 @@
-from typing import Callable, Optional, Tuple, List, Dict
+from typing import Tuple
 
 import os
 
@@ -18,12 +18,9 @@ import mlflow
 from tqdm.auto import tqdm
 import argparse
 
-from sklearn.metrics import f1_score
-
 from models.bert import (
     BertForClassification,
     BertForClassifierConfig,
-    BertForClassificationWithHFBertBase,
 )
 
 from models.bert.trainer import train, val
@@ -74,7 +71,6 @@ def get_sst2_dataloaders(
 def log_training_config(training_config: argparse.Namespace):
     mlflow.log_params(
         {
-            "cls_dropout_prob": training_config.cls_dropout_prob,
             "l2_regularization": training_config.l2_regularization,
             "batch_size": training_config.batch_size,
             "learning_rate": training_config.learning_rate,
@@ -98,12 +94,6 @@ if __name__ == "__main__":
     )
 
     parser.add_argument(
-        "--cls_dropout_prob",
-        type=float,
-        default=0.3,
-        help="dropout prob apply to the classification fcnn intermediate layer",
-    )
-    parser.add_argument(
         "--l2_regularization", type=float, default=0.001, help="optimizer weight decay"
     )
 
@@ -123,7 +113,7 @@ if __name__ == "__main__":
     training_config = parser.parse_args()
 
     device = torch.device("cuda") if torch.cuda.is_available() else torch.device("cpu")
-    config = BertForClassifierConfig(2, device, training_config.cls_dropout_prob)
+    config = BertForClassifierConfig(2, device)
     model = BertForClassification(config)
     criterion = CrossEntropyLoss()
     grad_scaler = torch.amp.GradScaler(device.type)
@@ -173,7 +163,7 @@ if __name__ == "__main__":
 
             model.eval()
             with torch.no_grad():
-                avg_val_loss, val_acc, f1_score = val(
+                avg_val_loss, val_acc, f1 = val(
                     model, val_dataloader, criterion, device
                 )
             state_dict_file_path = os.path.join(
@@ -187,7 +177,7 @@ if __name__ == "__main__":
                     "training_acc": training_acc,
                     "val_loss": avg_val_loss,
                     "val_acc": val_acc,
-                    "val_f1": f1_score,
+                    "val_f1": f1,
                     "learning_rate": lr_scheduler.get_last_lr()[0],
                 },
                 step=epoch,
