@@ -96,7 +96,7 @@ class EncoderLayer(nn.Module):
     def forward(
         self, hidden_states: torch.Tensor, attention_mask: torch.Tensor
     ) -> torch.Tensor:
-        attention_output = self.multi_head_self_attention(hidden_states.clone(), attention_mask)
+        attention_output = self.multi_head_self_attention(hidden_states, attention_mask)
         hidden_states =  self.ffnn(attention_output)
         return hidden_states
 
@@ -109,11 +109,11 @@ class FFNN(nn.Module):
         self.gelu = nn.GELU(approximate="tanh")
         self.dropout = nn.Dropout(dropout_prob)
         self.layer_norm = nn.LayerNorm(hidden_dim, eps=layer_norm_eps)
-    def forward(self, inputs: torch.Tensor) -> torch.Tensor:
-        hidden_states = self.intermediate_dense(inputs)
+    def forward(self, input_tensor: torch.Tensor) -> torch.Tensor:
+        hidden_states = self.intermediate_dense(input_tensor)
         hidden_states = self.gelu(hidden_states)
         hidden_states = self.last_dense(hidden_states)
-        return self.layer_norm(self.dropout(hidden_states) + inputs)
+        return self.layer_norm(self.dropout(hidden_states) + input_tensor)
 
 
 class MultiHeadSelfAttention(nn.Module):
