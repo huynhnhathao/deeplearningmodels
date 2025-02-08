@@ -88,27 +88,39 @@ class EncoderLayer(nn.Module):
             config.hidden_dim,
             config.num_heads,
             config.dropout_prob,
-            config.layer_norm_eps
+            config.layer_norm_eps,
         )
 
-        self.ffnn = FFNN(config.hidden_dim, config.fcnn_middle_dim, config.dropout_prob, config.layer_norm_eps)
+        self.ffnn = FFNN(
+            config.hidden_dim,
+            config.fcnn_middle_dim,
+            config.dropout_prob,
+            config.layer_norm_eps,
+        )
 
     def forward(
         self, hidden_states: torch.Tensor, attention_mask: torch.Tensor
     ) -> torch.Tensor:
         attention_output = self.multi_head_self_attention(hidden_states, attention_mask)
-        hidden_states =  self.ffnn(attention_output)
+        hidden_states = self.ffnn(attention_output)
         return hidden_states
 
 
 class FFNN(nn.Module):
-    def __init__(self, hidden_dim: int, middle_dim: int, dropout_prob: float, layer_norm_eps: float) -> None:
+    def __init__(
+        self,
+        hidden_dim: int,
+        middle_dim: int,
+        dropout_prob: float,
+        layer_norm_eps: float,
+    ) -> None:
         super().__init__()
         self.intermediate_dense = nn.Linear(hidden_dim, middle_dim, bias=True)
         self.last_dense = nn.Linear(middle_dim, hidden_dim, bias=True)
         self.gelu = nn.GELU(approximate="tanh")
         self.dropout = nn.Dropout(dropout_prob)
         self.layer_norm = nn.LayerNorm(hidden_dim, eps=layer_norm_eps)
+
     def forward(self, input_tensor: torch.Tensor) -> torch.Tensor:
         hidden_states = self.intermediate_dense(input_tensor)
         hidden_states = self.gelu(hidden_states)
@@ -122,7 +134,7 @@ class MultiHeadSelfAttention(nn.Module):
         hidden_dim: int,
         num_heads: int,
         dropout_prob: float,
-        layer_norm_eps: float
+        layer_norm_eps: float,
     ):
         """
         Transformer Self-attention
@@ -171,17 +183,23 @@ class MultiHeadSelfAttention(nn.Module):
         # transpose the queries, keys and values to separate the head dimension out
         queries = queries.view(
             batch_size, self.num_heads, sequence_length, self.head_dim
-        )
-        keys = keys.view(batch_size, self.num_heads, sequence_length, self.head_dim)
-        values = values.view(batch_size, self.num_heads, sequence_length, self.head_dim)
+        ).contiguous()
+        keys = keys.view(
+            batch_size, self.num_heads, sequence_length, self.head_dim
+        ).contiguous()
+        values = values.view(
+            batch_size, self.num_heads, sequence_length, self.head_dim
+        ).contiguous()
 
-        
+        attention_mask = (attention_mask == 0).float().fill_(float("-inf"))
+
+        attention_mask = attention_mask[:, None, None, :]
         # test the torch's implementation
         attention_values = torch.nn.functional.scaled_dot_product_attention(
             queries,
             keys,
             values,
-            attn_mask=attention_mask.unsqueeze(1).unsqueeze(-1).float(),
+            attn_mask=attention_mask,
             dropout_p=self.dropout_prob if self.training else 0.0,
             is_causal=False,
         )
@@ -276,7 +294,7 @@ class BertModel(nn.Module):
         embeddings = self.embedding(token_ids, token_type_ids, position_ids)
         # hidden_states shape (batch_size, sequence_length, hidden_dim)
         hidden_states: torch.Tensor = self.encoder(embeddings, attention_mask)
-        return (hidden_states, )
+        return (hidden_states,)
 
     def validate_input_dimension(
         self,
@@ -335,7 +353,7 @@ class BertForClassification(nn.Module):
             attention_mask,
         )
         return self.classification_head(hidden_states[0][:, 0, :])
-    
+
     def from_pretrained(self, model_name_or_path: str) -> nn.Module:
         """
         Load weights of a model identifier from huggingface's model hub
@@ -416,7 +434,6 @@ class BertForClassification(nn.Module):
                 f"encoder.layer.{i}.output.LayerNorm.bias": f"bert.encoder.encoder_layers.{i}.ffnn.layer_norm.bias"
                 for i in range(self.config.num_encoder_layers)
             },
-
         }
         pretrained_state_dict = pretrained_model.state_dict()
         new_state_dict = {}
@@ -424,7 +441,9 @@ class BertForClassification(nn.Module):
             if pretrained_key in pretrained_state_dict.keys():
                 new_state_dict[my_model_key] = pretrained_state_dict[pretrained_key]
             else:
-                raise RuntimeError(f"not found state dict key {pretrained_key} in pretrained model")
+                raise RuntimeError(
+                    f"not found state dict key {pretrained_key} in pretrained model"
+                )
 
         self.load_state_dict(new_state_dict, strict=False)
 
