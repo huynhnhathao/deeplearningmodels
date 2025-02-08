@@ -326,6 +326,7 @@ class BertForClassification(nn.Module):
         """
         Load weights of a model identifier from huggingface's model hub
         """
+        print(f"loading pretrained weights from {model_name_or_path}")
         pretrained_model = TransformerBertModel.from_pretrained(
             model_name_or_path, torch_dtype="auto"
         )
@@ -409,9 +410,7 @@ class BertForClassification(nn.Module):
             if pretrained_key in pretrained_state_dict.keys():
                 new_state_dict[my_model_key] = pretrained_state_dict[pretrained_key]
             else:
-                logger.warning(
-                    f"not found {pretrained_key} in pretrained model state dict"
-                )
+                raise RuntimeError(f"not found state dict key {pretrained_key} in pretrained model")
 
         self.load_state_dict(new_state_dict, strict=False)
 
