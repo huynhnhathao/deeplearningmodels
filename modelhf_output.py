@@ -14,7 +14,7 @@ device = torch.device("cuda") if torch.cuda.is_available() else torch.device("cp
 
 
 def embedding_checkpoint(
-    model: BertForClassification,
+    modelhf: BertForClassificationWithHFBertBase,
     input_ids: torch.Tensor,
     token_type_ids: torch.Tensor,
     attention_mask: torch.Tensor,
@@ -22,15 +22,20 @@ def embedding_checkpoint(
     batch_size, seq_length = input_ids.shape
     position_ids = torch.arange(0, seq_length, device=device).expand(batch_size, -1)
 
-    model_hidden_states = model.bert.embedding(input_ids, token_type_ids, position_ids)
+    modelhf_hidden_states = modelhf.bert_base.embeddings(
+        input_ids, token_type_ids, position_ids
+    )
 
     # next pass to the first encoder layer
     for i in range(12):
-        model_hidden_states = model.bert.encoder.encoder_layers[
-            i
-        ].multi_head_self_attention(model_hidden_states, attention_mask)
+        modelhf_hidden_states = modelhf.bert_base.encoder.layer[i].attention(
+            modelhf_hidden_states,
+            attention_mask.float()
+            .masked_fill(attention_mask == 0, float("-inf"))
+            .masked_fill(attention_mask == 1, float(0))[:, None, None, :],
+        )
 
-        print(model_hidden_states.shape)
+        print(modelhf_hidden_states.shape)
 
 
 def first_encoder_checkpoint(
@@ -53,9 +58,9 @@ if __name__ == "__main__":
     attention_mask = torch.ones((batch_size, seq_length), dtype=torch.long).to(device)
     checkpoint = "bert-base-uncased"
     config = BertForClassifierConfig(num_classes=2, device=device)
-    model = BertForClassification(config)
-    model.from_pretrained(checkpoint)
-    model.to(device)
+    modelhf = BertForClassificationWithHFBertBase(2, 768, checkpoint)
+    modelhf.to(device)
 
-    model.eval()
-    embedding_checkpoint(model, input_ids, token_type_ids, attention_mask)
+    modelhf.eval()
+
+    embedding_checkpoint(modelhf, input_ids, token_type_ids, attention_mask)

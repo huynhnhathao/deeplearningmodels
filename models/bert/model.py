@@ -48,7 +48,9 @@ class BertEmbedding(nn.Module):
     def __init__(self, config: BertConfig):
         super().__init__()
         self.position_embedding = nn.Embedding(
-            config.max_sequence_length, config.hidden_dim
+            config.max_sequence_length,
+            config.hidden_dim,
+            padding_idx=config.padding_token_id,
         )
         self.token_type_embedding = nn.Embedding(
             config.type_vocab_size, config.hidden_dim
@@ -182,11 +184,9 @@ class MultiHeadSelfAttention(nn.Module):
         values: torch.Tensor = self.V(hidden_states)
 
         # transpose the queries, keys and values to separate the head dimension out
-        queries = queries.view(
-            batch_size, self.num_heads, sequence_length, self.head_dim
-        )
-        keys = keys.view(batch_size, self.num_heads, sequence_length, self.head_dim)
-        values = values.view(batch_size, self.num_heads, sequence_length, self.head_dim)
+        queries = self.transpose_for_scores(queries)
+        keys = self.transpose_for_scores(keys)
+        values = self.transpose_for_scores(values)
 
         attention_mask = (
             attention_mask.float()
@@ -195,33 +195,42 @@ class MultiHeadSelfAttention(nn.Module):
         )
 
         attention_mask = attention_mask[:, None, None, :]
-
+        # -------------------------------------------------------------
         # attention_scores shape (batch_size, num_heads, sequence_length, sequence_length)
         # swap keys to have shape (batch_size, self.num_heads, self.head_dim, sequence_length)
-        attention_scores = torch.matmul(queries, torch.transpose(keys, -1, -2))
-        attention_scores = attention_scores / torch.sqrt(torch.tensor(self.head_dim))
+        scale_factor = 1 / math.sqrt(self.head_dim)
+        attention_weights = queries @ torch.transpose(keys, -1, -2) * scale_factor
 
         # mask out the padding positions by adding -inf to theirs attention scores
-        attention_scores = attention_scores + attention_mask
+        attention_weights += attention_mask
 
-        attention_scores = F.softmax(attention_scores, -1)
+        attention_weights = F.softmax(attention_weights, dim=-1)
 
         # apply dropout to the attention scores, random tokens will not be attended to at training
         if self.training:
-            attention_scores = self.attention_dropout(attention_scores)
+            attention_weights = self.attention_dropout(attention_weights)
 
         # attention_values shape: (batch_size, num_heads, sequence_length, dk)
-        attention_values = torch.matmul(attention_scores, values)
+        attention_values = attention_weights @ values
 
         # concat all heads' values to one vector representation per token
         # (batch_size, sequence_length, hidden_dim)
         # this is the "concat then linear projection step" in the Attention is all you need paper
-
-        attention_values = attention_values.reshape(batch_size, sequence_length, -1)
+        attention_values = attention_values.transpose(1, 2).reshape(
+            batch_size, sequence_length, -1
+        )
 
         attention_values = self.dense(attention_values)
 
         return self.layer_norm(self.dropout(attention_values) + hidden_states)
+
+    def transpose_for_scores(self, x: torch.Tensor) -> torch.Tensor:
+        new_x_shape = x.size()[:-1] + (
+            self.num_heads,
+            self.head_dim,
+        )
+        x = x.view(new_x_shape)
+        return x.permute(0, 2, 1, 3)
 
 
 class MultiHeadSelfAttentionSDPA(nn.Module):
