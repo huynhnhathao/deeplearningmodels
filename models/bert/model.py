@@ -33,7 +33,7 @@ class BertConfig:
     # all dropout layers used in the model has this same dropout probability
     dropout_prob: float = 0.1
 
-    num_encoder_layers: int = 1
+    num_encoder_layers: int = 12
     layer_norm_eps: float = 1e-12
 
 
@@ -190,8 +190,8 @@ class MultiHeadSelfAttention(nn.Module):
 
         attention_mask = (
             attention_mask.float()
-            .masked_fill_(attention_mask == 0, float("-inf"))
-            .masked_fill_(attention_mask == 1, float(0))
+            .masked_fill(attention_mask == 0, float("-inf"))
+            .masked_fill(attention_mask == 1, float(0))
         )
 
         attention_mask = attention_mask[:, None, None, :]
@@ -425,13 +425,14 @@ class BertForClassification(nn.Module):
         )
         return self.classification_head(hidden_states[0][:, 0, :])
 
-    def from_pretrained(self, model_name_or_path: str) -> nn.Module:
+    def from_pretrained(self, checkpoint: str) -> nn.Module:
         """
         Load weights of a model identifier from huggingface's model hub
         """
-        print(f"loading pretrained weights from {model_name_or_path}")
+
+        print(f"loading pretrained weights from {checkpoint}")
         pretrained_model = TransformerBertModel.from_pretrained(
-            model_name_or_path, torch_dtype="auto"
+            checkpoint, torch_dtype="auto"
         )
         state_dict_mapping = {
             # Embedding layers
