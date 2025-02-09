@@ -174,6 +174,100 @@ class MultiHeadSelfAttention(nn.Module):
         """
         hidden_states shape: (batch_size, sequence_length, hidden_dim)
         """
+        batch_size, sequence_length, _ = hidden_states.size()
+
+        # (batch_size, sequence_length, hidden_dim)
+        queries: torch.Tensor = self.Q(hidden_states)
+        keys: torch.Tensor = self.K(hidden_states)
+        values: torch.Tensor = self.V(hidden_states)
+
+        # transpose the queries, keys and values to separate the head dimension out
+        queries = queries.view(
+            batch_size, self.num_heads, sequence_length, self.head_dim
+        )
+        keys = keys.view(batch_size, self.num_heads, sequence_length, self.head_dim)
+        values = values.view(batch_size, self.num_heads, sequence_length, self.head_dim)
+
+        attention_mask = attention_mask.float().masked_fill_(
+            attention_mask == 0, float("-inf")
+        )
+
+        attention_mask = attention_mask[:, None, None, :]
+
+        # attention_scores shape (batch_size, num_heads, sequence_length, sequence_length)
+        # swap keys to have shape (batch_size, self.num_heads, self.head_dim, sequence_length)
+        attention_scores = torch.matmul(queries, torch.transpose(keys, -1, -2))
+        attention_scores = attention_scores / torch.sqrt(torch.tensor(self.head_dim))
+
+        # mask out the padding positions by adding -inf to theirs attention scores
+        attention_scores = attention_scores + attention_mask
+
+        attention_scores = F.softmax(attention_scores, -1)
+
+        # apply dropout to the attention scores, random tokens will not be attended to at training
+        if self.training:
+            attention_scores = self.attention_dropout(attention_scores)
+
+        # attention_values shape: (batch_size, num_heads, sequence_length, dk)
+        attention_values = torch.matmul(attention_scores, values)
+
+        # concat all heads' values to one vector representation per token
+        # (batch_size, sequence_length, hidden_dim)
+        # this is the "concat then linear projection step" in the Attention is all you need paper
+
+        attention_values = attention_values.reshape(batch_size, sequence_length, -1)
+
+        attention_values = self.dense(attention_values)
+
+        return self.layer_norm(self.dropout(attention_values) + hidden_states)
+
+
+class MultiHeadSelfAttentionSDPA(nn.Module):
+    def __init__(
+        self,
+        hidden_dim: int,
+        num_heads: int,
+        dropout_prob: float,
+        layer_norm_eps: float,
+    ):
+        """
+        Transformer Self-attention
+            Args
+                - hidden_dim: size of the token embedding and hidden_state
+                - num_heads: number of attention head
+                - dropout_prob: dropout probability apply to the attention scores,
+                    practically mean randomly prevent the attention to attend to some random tokens
+                - linear_dropout_prob: dropout prob apply to the linear layer after the self-attention layer
+        """
+        super().__init__()
+        assert (
+            hidden_dim % num_heads == 0
+        ), "hidden_dim must divisible for num_heads in self-attention"
+
+        self.hidden_dim = hidden_dim
+        self.num_heads = num_heads
+        # we'll use dk = dq = dv
+        self.head_dim = self.hidden_dim // self.num_heads
+        self.dropout_prob = dropout_prob
+        # because hidden_dim % num_heads == 0,
+        # output dim for num_heads is also the embedding_dim
+        self.Q = nn.Linear(self.hidden_dim, self.hidden_dim, bias=True)
+        self.K = nn.Linear(self.hidden_dim, self.hidden_dim, bias=True)
+        self.V = nn.Linear(self.hidden_dim, self.hidden_dim, bias=True)
+
+        self.attention_dropout = nn.Dropout(dropout_prob)
+        self.dense = nn.Linear(hidden_dim, hidden_dim, bias=True)
+        self.dropout = nn.Dropout(dropout_prob)
+        self.layer_norm = nn.LayerNorm(hidden_dim, layer_norm_eps)
+
+    def forward(
+        self,
+        hidden_states,
+        attention_mask: torch.Tensor,
+    ) -> torch.Tensor:
+        """
+        hidden_states shape: (batch_size, sequence_length, hidden_dim)
+        """
         batch_size, sequence_length, hidden_dim = hidden_states.size()
         # (batch_size, sequence_length, hidden_dim)
         queries: torch.Tensor = self.Q(hidden_states)
@@ -191,7 +285,9 @@ class MultiHeadSelfAttention(nn.Module):
             batch_size, self.num_heads, sequence_length, self.head_dim
         ).contiguous()
 
-        attention_mask = (attention_mask == 0).float().fill_(float("-inf"))
+        attention_mask = attention_mask.float().masked_fill_(
+            attention_mask == 0, float("-inf")
+        )
 
         attention_mask = attention_mask[:, None, None, :]
         # test the torch's implementation
@@ -204,34 +300,7 @@ class MultiHeadSelfAttention(nn.Module):
             is_causal=False,
         )
 
-        # #-----------------------------------------------------------
-        # # attention_scores shape (batch_size, num_heads, sequence_length, sequence_length)
-        # # swap keys to have shape (batch_size, self.num_heads, self.head_dim, sequence_length)
-        # attention_scores = torch.matmul(queries, torch.transpose(keys, -1, -2))
-        # attention_scores = attention_scores / torch.sqrt(torch.tensor(self.head_dim))
-        # # attention mask is of shape (batch_size, sequence_length),
-        # # need to create a tensor of shape (batch_size, num_heads, sequence_length, sequence_length)
-        # # to fit the attention_scores tensor
-        # # the element-wise logical end operation is to create an attention square matrix such that
-        # # padded tokens can't be attended to and can not attend to other tokens
-        # attention_mask = attention_mask.unsqueeze(1) & attention_mask.unsqueeze(-1)
-        # attention_scores = attention_scores.masked_fill(
-        #     attention_mask.unsqueeze(1) == 0, VERY_NEGATIVE_NUMBER
-        # )
-        # attention_scores = F.softmax(attention_scores, -1)
-
-        # # apply dropout to the attention scores, random tokens will not be attended to at training
-        # attention_scores = self.attention_dropout(attention_scores)
-
-        # # attention_values shape: (batch_size, num_heads, sequence_length, dk)
-        # attention_values = torch.matmul(attention_scores, values)
-
-        # # concat all heads' values to one vector representation per token
-        # # (batch_size, sequence_length, hidden_dim)
-        # # this is the "concat then linear projection step" in the Attention is all you need paper
-
-        # # -----------------------------------------------------------
-        attention_values = attention_values.view(batch_size, sequence_length, -1)
+        attention_values = attention_values.reshape(batch_size, sequence_length, -1)
         attention_values = self.dense(attention_values)
         return self.layer_norm(self.dropout(attention_values) + hidden_states)
 
