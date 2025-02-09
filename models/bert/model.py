@@ -33,7 +33,7 @@ class BertConfig:
     # all dropout layers used in the model has this same dropout probability
     dropout_prob: float = 0.1
 
-    num_encoder_layers: int = 12
+    num_encoder_layers: int = 1
     layer_norm_eps: float = 1e-12
 
 
@@ -188,8 +188,10 @@ class MultiHeadSelfAttention(nn.Module):
         keys = keys.view(batch_size, self.num_heads, sequence_length, self.head_dim)
         values = values.view(batch_size, self.num_heads, sequence_length, self.head_dim)
 
-        attention_mask = attention_mask.float().masked_fill_(
-            attention_mask == 0, float("-inf")
+        attention_mask = (
+            attention_mask.float()
+            .masked_fill_(attention_mask == 0, float("-inf"))
+            .masked_fill_(attention_mask == 1, float(0))
         )
 
         attention_mask = attention_mask[:, None, None, :]
@@ -561,6 +563,8 @@ def test_forward_pass():
     attention_mask = torch.ones((batch_size, seq_length), dtype=torch.long).to(
         device
     )  # All tokens active
+
+    attention_mask[:, -3:] = 0
 
     # Initialize model
     config = BertForClassifierConfig(num_classes=2, device=device)
