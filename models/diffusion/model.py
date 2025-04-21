@@ -5,15 +5,15 @@ from dataclasses import dataclass
 
 @dataclass
 class DiffusionModelConfig:
-    image_height: int
-    image_width: int
-    image_chan: int
+    image_height: int = 28
+    image_width: int = 28
+    image_chan: int = 1
 
-    embedding_dim: int
-    max_scheduler_steps: int
+    embedding_dim: int = 28
+    max_scheduler_steps: int = 1000
     # number of classes in the training image
     # add one class for the "no class" class, this class mean it can be any of the other classes
-    num_class: int
+    num_class: int = 11  # plus the unconditional class
 
 
 class UNet(nn.Module):
@@ -21,6 +21,7 @@ class UNet(nn.Module):
         """
         height, width: height and width of the input image
         """
+        super().__init__()
         # timestep embedding will be broadcasted and added to the noised input image
         self.time_embedding = nn.Embedding(
             num_embeddings=config.max_scheduler_steps,
@@ -89,13 +90,13 @@ class UNet(nn.Module):
                     out_channels=128,
                     kernel_size=3,
                     stride=2,
-                ),  # (128, 14, 14)? one skip conn of the encoder.conv4
+                ),  # (128, 14, 14) one skip conn of the encoder.conv4
                 "conv1": nn.Conv2d(
                     in_channels=256,
                     out_channels=128,
                     kernel_size=3,
                     stride=1,
-                    padding="valid",
+                    padding="same",
                 ),  # (256, 14, 14)
                 "conv2": nn.Conv2d(
                     in_channels=256,
@@ -110,7 +111,7 @@ class UNet(nn.Module):
                     kernel_size=3,
                     stride=1,
                     padding="same",
-                ),  # (128, 28, 28) + one skip conn of the encoder.conv2
+                ),  # (128, 28, 28) + one skip conn at the encoder.conv2
                 "conv3": nn.Conv2d(
                     in_channels=256,
                     out_channels=128,
@@ -143,9 +144,41 @@ class UNet(nn.Module):
         )
 
     def forward(self, x: torch.Tensor, t: int, c: int) -> torch.Tensor:
-        # x shape (B, C, H, W)
+        """
+
+        Args
+            x: tensor shape (B, C, H, W),  channel first
+        """
+        # t_embedding and c_embedding are of shape (1, embedding_dim)
         t_embedding = self.time_embedding(t).expand(1, 1, 1, -1)
         c_embedding = self.class_embedding(c).expand(1, 1, 1, -1)
+        tc = t_embedding + c_embedding
 
         # just add everything together :)
-        x = x + t_embedding + c_embedding
+        x = x + tc
+        h = x
+        hidden_states = []
+        for layer_name, layer in self.encoder.items():
+            h = layer(h)
+            if layer_name in ["conv1", "conv2", "conv4"]:
+                hidden_states.append(h)
+
+        for layer_name, layer in self.decoder.items():
+            if layer_name in ["transpose_conv1", "transpos_conv2", "conv4"]:
+                # dim1 is the channel dim
+                h = torch.concat([hidden_states.pop(), h], dim=1)
+            h = layer(h)
+        # h now is of shape (1, 28, 28)
+        return h
+
+
+if __name__ == "__main__":
+    config = DiffusionModelConfig(
+        image_height=28,
+        image_width=28,
+    )
+    model = UNet(config)
+    print(model)
+    input = torch.randn((8, 1, 28, 28))
+    out = model(input)
+    assert out.shape == (1, 28, 28)
