@@ -1,9 +1,11 @@
+import os
 from typing import List, Tuple, Optional
 import logging
 import torch
 import torchvision
 from torch.utils.data import DataLoader
 from torch.optim import Adam
+from dataclasses import asdict
 
 import numpy as np
 from models.diffusion.model import UNet, DiffusionModelConfig
@@ -155,7 +157,8 @@ def train_diffuser(
     batch_size: int,
     lr: float,
     device: torch.device,
-    upload_model: Optional[int] = None,
+    upload_model: Optional[int],
+    hf_repo_id: str,
 ) -> UNet:
 
     model = UNet(model_config)
@@ -199,4 +202,19 @@ def train_diffuser(
         )
 
         if upload_model is not None and (epoch + 1) % upload_model == 0:
-            pass
+            data = {
+                "config": model_config,
+                "scheduler": asdict(diffusion_linear_scheduler),
+                "statedict": model.state_dict(),
+                "train_loss": train_loss,
+                "val_loss": val_loss,
+            }
+
+            save_path = f"./models/diffusion_epoch{epoch+1}.pt"
+            torch.save(data, save_path)
+
+            upload_file_to_hf(
+                local_file_path=save_path,
+                repo_id=hf_repo_id,
+                repo_type="model",
+            )
