@@ -9,7 +9,8 @@ class DiffusionModelConfig:
     image_width: int = 28
     image_chan: int = 1
 
-    embedding_dim: int = 28
+    embedding_dim: int = 28 * 28
+
     max_scheduler_steps: int = 1000
     # number of classes in the training image
     # add one class for the "no class" class, this class mean it can be any of the other classes
@@ -22,6 +23,7 @@ class UNet(nn.Module):
         height, width: height and width of the input image
         """
         super().__init__()
+        self.config = config
         # timestep embedding will be broadcasted and added to the noised input image
         self.time_embedding = nn.Embedding(
             num_embeddings=config.max_scheduler_steps,
@@ -45,14 +47,14 @@ class UNet(nn.Module):
                 ),  # (64, 28, 28)
                 "conv2": nn.Conv2d(
                     in_channels=64,
-                    out_channels=64,
+                    out_channels=128,
                     kernel_size=3,
                     padding="same",
                     stride=1,
-                ),  # (64, 28, 28)
-                "maxpool1": nn.MaxPool2d(kernel_size=3, stride=1),  # (64, 14, 14)
+                ),  # (128, 28, 28)
+                "maxpool1": nn.MaxPool2d(kernel_size=2),  # (128, 14, 14)
                 "conv3": nn.Conv2d(
-                    in_channels=64,
+                    in_channels=128,
                     out_channels=128,
                     kernel_size=3,
                     padding="same",
@@ -65,7 +67,7 @@ class UNet(nn.Module):
                     padding="same",
                     stride=1,
                 ),  # (128, 14, 14)
-                "maxpool2": nn.MaxPool2d(kernel_size=3, stride=1),  # (128, 7, 7)
+                "maxpool2": nn.MaxPool2d(kernel_size=2),  # (128, 7, 7)
                 "conv5": nn.Conv2d(
                     in_channels=128,
                     out_channels=256,
@@ -88,12 +90,13 @@ class UNet(nn.Module):
                 "transpose_conv1": nn.ConvTranspose2d(
                     in_channels=256,
                     out_channels=128,
-                    kernel_size=3,
+                    kernel_size=2,
                     stride=2,
-                ),  # (128, 14, 14) one skip conn of the encoder.conv4
+                ),
+                # (128, 14, 14) one skip conn of the encoder.conv4
                 "conv1": nn.Conv2d(
                     in_channels=256,
-                    out_channels=128,
+                    out_channels=256,
                     kernel_size=3,
                     stride=1,
                     padding="same",
@@ -105,13 +108,13 @@ class UNet(nn.Module):
                     stride=1,
                     padding="same",
                 ),  # (256, 14, 14)
-                "transpos_conv2": nn.ConvTranspose2d(
+                "transpose_conv2": nn.ConvTranspose2d(
                     in_channels=256,
                     out_channels=128,
-                    kernel_size=3,
-                    stride=1,
-                    padding="same",
-                ),  # (128, 28, 28) + one skip conn at the encoder.conv2
+                    kernel_size=2,
+                    stride=2,
+                ),
+                # (128, 28, 28) + one skip conn at the encoder.conv2
                 "conv3": nn.Conv2d(
                     in_channels=256,
                     out_channels=128,
@@ -125,7 +128,8 @@ class UNet(nn.Module):
                     kernel_size=3,
                     stride=1,
                     padding="same",
-                ),  # (64, 28, 28) + one skip conn at the encoder.conv1
+                ),
+                # (64, 28, 28) + one skip conn at the encoder.conv1
                 "conv5": nn.Conv2d(
                     in_channels=128,
                     out_channels=64,
@@ -143,20 +147,30 @@ class UNet(nn.Module):
             }
         )
 
-    def forward(self, x: torch.Tensor, t: int, c: int) -> torch.Tensor:
+    def forward(
+        self, x: torch.Tensor, t: torch.Tensor, c: torch.Tensor
+    ) -> torch.Tensor:
         """
 
         Args
             x: tensor shape (B, C, H, W),  channel first
         """
         # t_embedding and c_embedding are of shape (1, embedding_dim)
-        t_embedding = self.time_embedding(t).expand(1, 1, 1, -1)
-        c_embedding = self.class_embedding(c).expand(1, 1, 1, -1)
+        t_embedding = (
+            self.time_embedding(t)
+            .view(self.config.image_height, self.config.image_width)
+            .expand(1, 1, self.config.image_height, self.config.image_width)
+        )
+        c_embedding = (
+            self.class_embedding(c)
+            .view(self.config.image_height, self.config.image_width)
+            .expand(1, 1, self.config.image_height, self.config.image_width)
+        )
+
         tc = t_embedding + c_embedding
 
         # just add everything together :)
-        x = x + tc
-        h = x
+        h = x + tc
         hidden_states = []
         for layer_name, layer in self.encoder.items():
             h = layer(h)
@@ -164,7 +178,7 @@ class UNet(nn.Module):
                 hidden_states.append(h)
 
         for layer_name, layer in self.decoder.items():
-            if layer_name in ["transpose_conv1", "transpos_conv2", "conv4"]:
+            if layer_name in ["conv1", "conv3", "conv5"]:
                 # dim1 is the channel dim
                 h = torch.concat([hidden_states.pop(), h], dim=1)
             h = layer(h)
@@ -180,5 +194,7 @@ if __name__ == "__main__":
     model = UNet(config)
     print(model)
     input = torch.randn((8, 1, 28, 28))
-    out = model(input)
-    assert out.shape == (1, 28, 28)
+    t = torch.tensor([100])
+    c = torch.tensor([10])
+    out = model(input, t, c)
+    # out shape  (8, 1, 28, 28)
