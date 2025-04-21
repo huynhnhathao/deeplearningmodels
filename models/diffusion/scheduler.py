@@ -1,17 +1,18 @@
-from typing import List, Dict, Optional, Literal
+from typing import List, Dict, Optional, Literal, Sequence
+import torch
 from dataclasses import dataclass
 import numpy as np
 
 
 @dataclass
-class Scheduler:
+class DiffusionScheduler:
     beta_start: float
     beta_end: float
     steps: int
     scheduler_type: Literal["linear", "cosine"]
-    beta_t: List[float] = []
-    alpha_t: List[float] = []
-    alpha_bar_t: List[float] = []
+    beta_t: List[float]
+    alpha_t: List[float]
+    alpha_bar_t: List[float]
 
     def __init__(
         self,
@@ -34,9 +35,9 @@ class Scheduler:
         else:
             raise RuntimeError(f"unsupported scheduler type {scheduler_type}")
 
-    def get_beta(self, t: int) -> float:
+    def get_alpha_bar(self, t: Sequence[int], device: torch.device) -> torch.Tensor:
         """
         t counts from 1 to steps
         """
         assert t > 0 and t <= self.steps, "t out of range"
-        return self.beta_t[t]
+        return torch.tensor(self.alpha_bar_t[t], dtype=torch.float32, device=device)

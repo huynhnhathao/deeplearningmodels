@@ -154,17 +154,17 @@ class UNet(nn.Module):
 
         Args
             x: tensor shape (B, C, H, W),  channel first
+            t: tensor shape (B, ), noise schedule time step per image in the batch
+            c: tensor shape (B, ) index label of classes in the batch
         """
-        # t_embedding and c_embedding are of shape (1, embedding_dim)
-        t_embedding = (
-            self.time_embedding(t)
-            .view(self.config.image_height, self.config.image_width)
-            .expand(1, 1, self.config.image_height, self.config.image_width)
+        # t_embedding and c_embedding are of shape (B, embedding_dim)
+        B, C, H, W = x.shape
+
+        t_embedding = self.time_embedding(t).view(
+            B, 1, self.config.image_height, self.config.image_width
         )
-        c_embedding = (
-            self.class_embedding(c)
-            .view(self.config.image_height, self.config.image_width)
-            .expand(1, 1, self.config.image_height, self.config.image_width)
+        c_embedding = self.class_embedding(c).view(
+            B, 1, self.config.image_height, self.config.image_width
         )
 
         tc = t_embedding + c_embedding
@@ -194,7 +194,7 @@ if __name__ == "__main__":
     model = UNet(config)
     print(model)
     input = torch.randn((8, 1, 28, 28))
-    t = torch.tensor([100])
-    c = torch.tensor([10])
+    t = torch.tensor([1, 2, 3, 4, 5, 6, 7, 8])
+    c = torch.tensor([1, 2, 3, 4, 5, 6, 7, 8])
     out = model(input, t, c)
     # out shape  (8, 1, 28, 28)
