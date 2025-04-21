@@ -39,6 +39,16 @@ def get_train_val_dataloader(
     return train_dataloader, val_dataloader
 
 
+def set_null_class_with_probability(
+    labels: torch.Tensor, null_class_idx: int, null_class_prob: float
+) -> torch.Tensor:
+    # randomly replace the true classes to the null class with a given probability
+    rand = np.random.uniform(0, 1, labels.shape[0])
+    selected_indices = rand < null_class_prob
+    labels[selected_indices] = null_class_idx
+    return labels
+
+
 def train_diffuser_one_epoch(
     model: UNet,
     optimizer: torch.optim.Optimizer,
@@ -46,6 +56,7 @@ def train_diffuser_one_epoch(
     dataloader: DataLoader,
     max_timestep: int,
     scheduler: DiffusionScheduler,
+    null_class_idx: int,
     null_class_prob: float,
     device: torch.device,
 ) -> float:
@@ -53,20 +64,20 @@ def train_diffuser_one_epoch(
     total_loss = 0
     for batch in dataloader:
         images, labels = batch[0].to(device), batch[1].to(device)
-
-        # noises are sampled from a standard normal distribution independently for each pixel of the image
-        epsilon = torch.randn(size=images.shape, device=device)
+        labels = set_null_class_with_probability(
+            labels, null_class_idx, null_class_prob
+        )
 
         # create a random set of timesteps from 1 to T inclusive
         t = np.random.randint(low=1, high=max_timestep + 1, size=images.shape[0])
 
         # shape (B, )
         alpha_bar_t = scheduler.get_alpha_bar(t, device=device)
-        alpha_bar_t = alpha_bar_t.expand(1, 1, images.shape[-2:])
 
-        noisy_images = (
-            torch.sqrt(alpha_bar_t) * images + torch.sqrt(1 - alpha_bar_t) * epsilon
-        )
+        # noises are sampled from a standard normal distribution independently for each pixel of the image
+        epsilon = torch.randn(size=images.shape, device=device)
+
+        noisy_images = torch.sqrt(alpha_bar_t) * images + torch.sqrt(1 - alpha_bar_t)
 
         # labels shape (B, )
         # t shape (B, )
