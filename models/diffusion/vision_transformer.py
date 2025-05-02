@@ -1,5 +1,8 @@
 import torch
 import torch.nn as nn
+from torch.utils.data import DataLoader
+import torchvision
+from torchvision.transforms import ToTensor
 from dataclasses import dataclass
 
 @dataclass
@@ -74,6 +77,8 @@ class VisionTransformerForClassifier(nn.Module):
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         """
+        Expecting x of shape (B, H, W, C)
+
         Return tensor logits of shape (B, num_classes)
         """
         B, H, W, C = x.shape
@@ -87,4 +92,12 @@ class VisionTransformerForClassifier(nn.Module):
 
 
 
+def get_cifar10_dataloader(batch_size: int) -> tuple[DataLoader, DataLoader]:
+    transforms = torchvision.transforms.Compose([ToTensor()])
+    train_dataset = torchvision.datasets.CIFAR10(root="./", train=True, transform = transforms, download=True)
+    val_dataset = torchvision.datasets.CIFAR10(root="./", train=False, transform = transforms, download=True)
 
+    train_dataloader = DataLoader(dataset=train_dataset, batch_size=batch_size, shuffle=True)
+    val_dataloader = DataLoader(dataset=val_dataset, batch_size=batch_size, shuffle=False)
+
+    return train_dataloader, val_dataloader
