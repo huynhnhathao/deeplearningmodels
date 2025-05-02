@@ -5,10 +5,13 @@ import torchvision
 from torchvision.transforms import ToTensor
 from dataclasses import dataclass
 
+import numpy as np
+
 @dataclass
 class VTConfig:
     image_height: int
     image_width: int
+    channel: int
     # one number, represent a square patch size (n, n), 
     # it should be divisible by both the image_width and image_height
     patch_size: tuple[int, int]
@@ -36,7 +39,7 @@ class VisionTransformer(nn.Module):
         assert config.image_width % config.patch_size[1] == 0, "input image is not divisible by patch_size[1]"
 
         # learn positional embedding 
-        flatten_patch_size = config.patch_size[0] * config.patch_size
+        flatten_patch_size = config.patch_size[0] * config.patch_size[1] * config.channel
         self.linear = nn.Linear(flatten_patch_size, config.hidden_size) 
         num_patch = (config.image_height * config.image_width) // (config.patch_size[0] * config.patch_size[1])
         self.positional_embedding = nn.Embedding(num_patch, config.hidden_size)
@@ -101,3 +104,47 @@ def get_cifar10_dataloader(batch_size: int) -> tuple[DataLoader, DataLoader]:
     val_dataloader = DataLoader(dataset=val_dataset, batch_size=batch_size, shuffle=False)
 
     return train_dataloader, val_dataloader
+
+
+def train_one_epoch(model: nn.Module, 
+                    dataloader: DataLoader,
+                    criterion: torch.nn.CrossEntropyLoss,
+                    optimizer: torch.optim.Optimizer,
+                    device: torch.device,
+                    ) -> float:
+    model.train()
+    losses = []
+    for batch in dataloader:
+        images, labels = batch[0].to(device), batch[1].to(device)
+        logits = model(images)
+        loss = criterion(logits, labels)
+        optimizer.zero_grad()
+        loss.backward()
+        optimizer.step()
+
+        losses.append(loss.detach().cpu().item())
+
+    return np.mean(losses)
+
+
+def val(model: nn.Module, 
+    dataloader: DataLoader,
+    criterion: torch.nn.CrossEntropyLoss,
+    device: torch.device
+    ) -> tuple[float, float]:
+    
+    model.eval()    
+    losses = []
+    total_correct: int = 0
+    total: int = 0
+
+    for batch in dataloader:
+        images, labels = batch[0].to(device), batch[1].to(device)
+        logits: torch.Tensor = model(images)
+        loss = criterion(logits, labels)
+        losses.append(loss.detach().cpu().item())
+        preds = torch.argmax(logits, -1)
+        total_correct += torch.sum(preds == labels)
+        total += len(batch)
+
+    return np.mean(losses), total_correct / total
