@@ -11,4 +11,5 @@ class DDPMDenoiser:
     Simplest denoiser, it only subtracts the predicted noise from the noisy image until it gets the t_0 image
     """
 
-    pass
+    def __init__(self, num_step: int) -> None:
+        pass
