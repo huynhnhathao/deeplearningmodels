@@ -1,7 +1,5 @@
 import torch
-
 import torch.nn as nn
-
 from dataclasses import dataclass
 
 @dataclass
@@ -81,7 +79,8 @@ class VisionTransformerForClassifier(nn.Module):
         B, H, W, C = x.shape
 
         h = self.vision_transformer(x)
-        logits = self.classifier(h)
+        logits: torch.Tensor = self.classifier(h)
+        assert logits.shape[0] == B and logits.shape[1] == self.config.num_classes
         return logits
 
 
