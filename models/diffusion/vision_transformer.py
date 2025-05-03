@@ -116,7 +116,7 @@ class VisionTransformer(nn.Module):
         )
 
         # add positional embedding vectors
-        patch_indices = torch.arange(start=0, end=self.num_patches + 1)
+        patch_indices = torch.arange(start=0, end=self.num_patches + 1, device=x.device)
         position_embedding = self.positional_embedding(patch_indices)
         h = h + position_embedding
 
@@ -139,7 +139,7 @@ class VisionTransformerForClassifier(nn.Module):
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         """
-        Expecting x of shape (B, C, H, W), channel last
+        Expecting x of shape (B, C, H, W), channel first
         """
         B, C, H, W = x.shape
         # h shape (B, num_patches, hidden_dim)
@@ -215,7 +215,7 @@ def val(
         loss = criterion(logits, labels)
         losses.append(loss.detach().cpu().item())
         preds = torch.argmax(logits, -1)
-        total_correct += torch.sum(preds == labels)
+        total_correct += torch.sum(preds == labels).item()
         total += len(labels)
 
     return np.mean(losses), total_correct / total
