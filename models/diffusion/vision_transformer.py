@@ -27,8 +27,6 @@ class VTConfig:
     num_head: int
     transformer_encoder_num_layers: int
 
-    classifier_input_dim: int
-
 
 @dataclass
 class VTForClassifierConfig(VTConfig):
@@ -38,7 +36,11 @@ class VTForClassifierConfig(VTConfig):
 class VisionTransformer(nn.Module):
     """
     VisionTransformer model take an input image of shape (H, W, C) and transform them into n embedding vectors
-    of shape (n, h) where n is the number of patch, h is the hidden dimension
+    of shape (n+1, h) where n is the number of patch, h is the hidden dimension
+
+    This model also prepend a CLS token to the start of the patch, and use that CLS token embedding to do classification
+    This forces the model to aggregate the image's representation into the embedding of the CLS token, what kind of representation
+    depends on your training objective though, this method is a way to do aggregation of the image into one embedding vector
     """
 
     def __init__(self, config: VTConfig):
@@ -62,13 +64,18 @@ class VisionTransformer(nn.Module):
         self.num_patches = (config.image_height * config.image_width) // (
             config.patch_size[0] * config.patch_size[1]
         )
-        self.positional_embedding = nn.Embedding(self.num_patches, config.hidden_size)
+        self.positional_embedding = nn.Embedding(
+            self.num_patches + 1, config.hidden_size
+        )
+
         encoder_layer = nn.TransformerEncoderLayer(
             d_model=config.hidden_size, nhead=config.num_head, batch_first=True
         )
         self.transformer_encoder = nn.TransformerEncoder(
             encoder_layer, config.transformer_encoder_num_layers
         )
+
+        self.CLS_TOKEN_EMBEDDING = nn.Parameter(torch.zeros(config.hidden_size))
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         """
@@ -102,8 +109,11 @@ class VisionTransformer(nn.Module):
         # first projection of the flatten patch (h, w, c) to the transformer's hidden size
         h = self.linear(patches)
 
+        # prepend the CLS token
+        h = torch.cat([h, self.CLS_TOKEN_EMBEDDING.expand(B, 1, -1)], dim=1)
+
         # add positional embedding vectors
-        patch_indices = torch.arange(start=0, end=self.num_patches).expand(1, -1)
+        patch_indices = torch.arange(start=0, end=self.num_patches + 1).expand(1, -1)
         position_embedding = self.positional_embedding(patch_indices)
         h = h + position_embedding
 
@@ -112,8 +122,8 @@ class VisionTransformer(nn.Module):
         out: torch.Tensor = self.transformer_encoder(h)
         assert out.shape[0] == B
         assert (
-            out.shape[1] == self.num_patches
-        ), f"expecting second dimension of the output tensor equals {self.num_patch}, received {out.shape}"
+            out.shape[1] == self.num_patches + 1
+        ), f"expecting second dimension of the output tensor equals {self.num_patches}, received {out.shape}"
         return out
 
 
@@ -122,9 +132,7 @@ class VisionTransformerForClassifier(nn.Module):
         super().__init__()
         self.config = config
         self.vision_transformer = VisionTransformer(config)
-        self.classifier = nn.Linear(
-            self.config.classifier_input_dim, self.config.num_classes
-        )
+        self.classifier = nn.Linear(config.hidden_size, self.config.num_classes)
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         """
@@ -133,9 +141,10 @@ class VisionTransformerForClassifier(nn.Module):
         B, H, W, C = x.shape
         # h shape (B, num_patches, hidden_dim)
         h = self.vision_transformer(x)
-        h = h.view(B, -1)
+        # take the CLS token embedding
+        first_h = h[:, 0, :]
 
-        logits: torch.Tensor = self.classifier(h)
+        logits: torch.Tensor = self.classifier(first_h)
         assert logits.shape[0] == B and logits.shape[1] == self.config.num_classes
         return logits
 
@@ -263,7 +272,6 @@ if __name__ == "__main__":
         hidden_size=512,
         num_head=8,
         transformer_encoder_num_layers=3,
-        classifier_input_dim=8192,
         num_classes=10,
     )
     model = VisionTransformerForClassifier(config)
