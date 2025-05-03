@@ -2,7 +2,7 @@ import torch
 import torch.nn as nn
 from torch.utils.data import DataLoader
 import torchvision
-from torchvision.transforms import ToTensor
+from torchvision.transforms import ToTensor, Normalize
 from dataclasses import dataclass
 import logging
 import numpy as np
@@ -75,11 +75,11 @@ class VisionTransformer(nn.Module):
             encoder_layer, config.transformer_encoder_num_layers
         )
 
-        self.CLS_TOKEN_EMBEDDING = nn.Parameter(torch.zeros(config.hidden_size))
+        self.CLS_TOKEN_EMBEDDING = nn.Parameter(torch.randn(config.hidden_size))
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         """
-        Expecting x of shape (B, H, W, C), channel last
+        Expecting x of shape (B, C, H, W)
         """
         B, C, H, W = x.shape
         assert (
@@ -94,13 +94,13 @@ class VisionTransformer(nn.Module):
 
         patches = x.view(
             B,
+            C,
             H // self.config.patch_size[0],
             self.config.patch_size[0],
             W // self.config.patch_size[1],
             self.config.patch_size[1],
-            C,
         )
-        patches = patches.permute(0, 1, 3, 2, 4, -1).contiguous()
+        patches = patches.permute(0, 2, 4, 3, 5, 1).contiguous()
         # (B, num_patches, flatten_patch_dim)
         patches = patches.view(
             B, -1, self.config.patch_size[0] * self.config.patch_size[1] * C
@@ -110,7 +110,10 @@ class VisionTransformer(nn.Module):
         h = self.linear(patches)
 
         # prepend the CLS token
-        h = torch.cat([h, self.CLS_TOKEN_EMBEDDING.expand(B, 1, -1)], dim=1)
+        h = torch.cat(
+            [self.CLS_TOKEN_EMBEDDING.expand(B, 1, -1), h],
+            dim=1,
+        )
 
         # add positional embedding vectors
         patch_indices = torch.arange(start=0, end=self.num_patches + 1).expand(1, -1)
@@ -150,7 +153,11 @@ class VisionTransformerForClassifier(nn.Module):
 
 
 def get_cifar10_dataloader(batch_size: int) -> tuple[DataLoader, DataLoader]:
-    transforms = torchvision.transforms.Compose([ToTensor()])
+    cifar10_mean = (0.4914, 0.4822, 0.4465)
+    cifar10_std = (0.2023, 0.1994, 0.2010)
+    transforms = torchvision.transforms.Compose(
+        [ToTensor(), Normalize(mean=cifar10_mean, std=cifar10_std)]
+    )
     train_dataset = torchvision.datasets.CIFAR10(
         root="./", train=True, transform=transforms, download=True
     )
