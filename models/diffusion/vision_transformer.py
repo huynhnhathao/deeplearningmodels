@@ -116,7 +116,7 @@ class VisionTransformer(nn.Module):
         )
 
         # add positional embedding vectors
-        patch_indices = torch.arange(start=0, end=self.num_patches + 1).expand(1, -1)
+        patch_indices = torch.arange(start=0, end=self.num_patches + 1)
         position_embedding = self.positional_embedding(patch_indices)
         h = h + position_embedding
 
@@ -216,7 +216,7 @@ def val(
         losses.append(loss.detach().cpu().item())
         preds = torch.argmax(logits, -1)
         total_correct += torch.sum(preds == labels)
-        total += len(batch)
+        total += len(labels)
 
     return np.mean(losses), total_correct / total
 
