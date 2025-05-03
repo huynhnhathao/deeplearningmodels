@@ -81,7 +81,7 @@ class VisionTransformer(nn.Module):
         """
         Expecting x of shape (B, H, W, C), channel last
         """
-        B, H, W, C = x.shape
+        B, C, H, W = x.shape
         assert (
             H == self.config.image_height
         ), f"x shape: {x.shape}, expecting {H} == {self.config.image_height}"
@@ -136,9 +136,9 @@ class VisionTransformerForClassifier(nn.Module):
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         """
-        Expecting x of shape (B, H, W, C), channel last
+        Expecting x of shape (B, C, H, W), channel last
         """
-        B, H, W, C = x.shape
+        B, C, H, W = x.shape
         # h shape (B, num_patches, hidden_dim)
         h = self.vision_transformer(x)
         # take the CLS token embedding
@@ -279,7 +279,7 @@ if __name__ == "__main__":
     calculate_model_memory(model)
 
     B = 2
-    input = torch.randn(B, 32, 32, 3)
+    input = torch.randn(B, 3, 32, 32)
 
     out: torch.Tensor = model(input)
 
