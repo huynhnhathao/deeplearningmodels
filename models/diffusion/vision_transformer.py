@@ -7,6 +7,9 @@ from dataclasses import dataclass
 import logging
 import numpy as np
 
+from tqdm import tqdm
+
+
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s - %(levelname)s - %(message)s",
@@ -268,6 +271,42 @@ def calculate_model_memory(model: nn.Module):
     logger.info(f"Model Memory Usage (Detected dtype: {dtype_name}):")
     logger.info(f"Total Parameters: {total_params:,}")
     logger.info(f"Total Memory: {total_memory_gb:,.2f} GB")
+
+
+def train() -> nn.Module:
+    lr = 1e-4
+    batch_size = 32
+    num_epoch = 10
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    config = VTForClassifierConfig(
+        image_height=32,
+        image_width=32,
+        channel=3,
+        patch_size=(8, 8),
+        hidden_size=512,
+        num_head=8,
+        transformer_encoder_num_layers=3,
+        num_classes=10,
+    )
+
+    model = VisionTransformerForClassifier(config)
+    criterion = nn.CrossEntropyLoss()
+    optimizer = torch.optim.Adam(
+        model.parameters(),
+        lr=lr,
+    )
+    train_dataloader, val_dataloader = get_cifar10_dataloader(batch_size)
+
+    for i in tqdm(range(num_epoch)):
+        training_loss = train_one_epoch(
+            model, train_dataloader, criterion, optimizer, device
+        )
+        val_loss, val_acc = val(model, val_dataloader, criterion, device)
+        print(
+            f"epoch {i+1}, training loss: {training_loss}, val loss: {val_loss}, val_acc: {val_acc}"
+        )
+
+    return model
 
 
 if __name__ == "__main__":
